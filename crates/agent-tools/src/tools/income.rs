@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use wealthfolio_core::accounts::{account_in_aggregate_scope, AccountPurpose};
+
 use crate::env::AgentEnvironment;
 use crate::scope::AgentScope;
 use crate::tool::{AgentTool, AgentToolAccess, AgentToolError, AgentToolResult};
@@ -91,11 +93,23 @@ impl AgentTool for GetIncome {
     ) -> Result<AgentToolResult, AgentToolError> {
         let args: GetIncomeArgs = serde_json::from_value(args)?;
 
-        // Get income summaries from service
-        let summaries = env
-            .income_service()
-            .get_income_summary(None)
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+        // Accounts the user left out of performance are skipped. An empty id list means
+        // "no filter" to the income service, so it must not be passed through.
+        let account_ids: Vec<String> = env
+            .account_service()
+            .get_non_archived_accounts()
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
+            .into_iter()
+            .filter(|account| account_in_aggregate_scope(account, AccountPurpose::Income))
+            .map(|account| account.id)
+            .collect();
+        let summaries = if account_ids.is_empty() {
+            Vec::new()
+        } else {
+            env.income_service()
+                .get_income_summary(Some(&account_ids))
+                .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
+        };
 
         // Determine which period to return
         let period = args.period.unwrap_or_else(|| "YTD".to_string());

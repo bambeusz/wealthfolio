@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{errors::ValidationError, Error, Result};
 
-use super::accounts_constants::account_types;
+use super::accounts_constants::{account_types, AccountPurpose};
 
 /// Tracking mode for an account - determines how holdings are tracked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -263,6 +263,47 @@ impl Account {
             .as_str()
             .filter(|s| !s.is_empty())
             .map(String::from)
+    }
+
+    /// Reads `meta.portfolio.<key>` as a bool; a missing/invalid value means `true`
+    /// so existing accounts keep counting everywhere.
+    fn portfolio_flag(&self, key: &str) -> bool {
+        let Some(meta) = self
+            .meta
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        else {
+            return true;
+        };
+        serde_json::from_str::<serde_json::Value>(meta)
+            .ok()
+            .and_then(|v| v.get("portfolio")?.get(key)?.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// Whether the account counts toward net worth (and holdings/allocation totals).
+    pub fn include_in_net_worth(&self) -> bool {
+        self.portfolio_flag("includeInNetWorth")
+    }
+
+    /// Whether the account counts toward performance, contributions and income totals.
+    pub fn include_in_performance(&self) -> bool {
+        self.portfolio_flag("includeInPerformance")
+    }
+}
+
+/// Whether `account` belongs in a multi-account aggregate for `purpose`. Net worth and
+/// holdings/allocation follow the net-worth flag; performance, contributions and income
+/// follow the performance flag; every other purpose is unaffected. Single-account views
+/// must not call this: an explicitly selected account is always shown.
+pub fn account_in_aggregate_scope(account: &Account, purpose: AccountPurpose) -> bool {
+    match purpose {
+        AccountPurpose::NetWorth | AccountPurpose::Holdings => account.include_in_net_worth(),
+        AccountPurpose::Performance | AccountPurpose::Income => account.include_in_performance(),
+        AccountPurpose::Spending
+        | AccountPurpose::GoalFunding
+        | AccountPurpose::ContributionLimits => true,
     }
 }
 

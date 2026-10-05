@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use wealthfolio_core::{
     accounts::{
-        account_supports_portfolio_scope, account_supports_purpose, Account, AccountPurpose,
-        TrackingMode,
+        account_in_aggregate_scope, account_supports_portfolio_scope, account_supports_purpose,
+        Account, AccountPurpose, TrackingMode,
     },
     allocation::{AllocationHoldings, PortfolioAllocations},
     health::HealthServiceTrait,
@@ -191,14 +191,17 @@ pub async fn update_portfolio(handle: AppHandle, state: ProfileAccess) -> Result
     Ok(())
 }
 
+/// Resolves a scope for a multi-account aggregate; `All`/`Portfolio` drop accounts the
+/// user left out for `purpose`, explicit account selections are kept.
 async fn resolve_scope(
     filter: &AccountScope,
     state: &ServiceContext,
+    purpose: AccountPurpose,
 ) -> Result<ResolvedAccountScope, String> {
     let base_currency = state.get_base_currency();
     state
         .portfolio_service()
-        .resolve_account_scope(filter, &base_currency)
+        .resolve_aggregate_scope(filter, &base_currency, purpose)
         .map_err(|e| e.to_string())
 }
 
@@ -209,20 +212,15 @@ async fn resolve_current_valuation_scope(
     let base_currency = state.get_base_currency();
     let resolved = state
         .portfolio_service()
-        .resolve_account_scope(filter, &base_currency)
+        .resolve_aggregate_scope(filter, &base_currency, AccountPurpose::Holdings)
         .map_err(|e| e.to_string())?;
 
+    // Portfolio members come from the already flag-filtered resolution; the
+    // valuation filter downstream still drops archived / ineligible accounts.
     let account_ids = match filter {
         AccountScope::Account { account_id } => vec![account_id.clone()],
         AccountScope::Accounts { account_ids } => unique_account_ids(account_ids.clone()),
-        AccountScope::Portfolio { portfolio_id } => {
-            state
-                .portfolio_service()
-                .get_portfolio(portfolio_id)
-                .map_err(|e| e.to_string())?
-                .account_ids
-        }
-        AccountScope::All => resolved.account_ids.clone(),
+        AccountScope::Portfolio { .. } | AccountScope::All => resolved.account_ids.clone(),
     };
 
     Ok(ResolvedAccountScope {
@@ -262,7 +260,7 @@ async fn get_holdings_for_filter(
     include_closed: bool,
 ) -> Result<Vec<Holding>, String> {
     let base_currency = state.get_base_currency();
-    let resolved = resolve_scope(&filter, state).await?;
+    let resolved = resolve_scope(&filter, state, AccountPurpose::Holdings).await?;
     let account_ids = holdings_account_ids(state, &resolved.account_ids)?;
     if account_ids.is_empty() {
         return Ok(Vec::new());
@@ -358,7 +356,7 @@ pub async fn get_portfolio_allocations(
     let context = state.context()?;
     let base_currency = context.get_base_currency();
     let filter = filter.into_account_filter()?;
-    let resolved = resolve_scope(&filter, &context).await?;
+    let resolved = resolve_scope(&filter, &context, AccountPurpose::Holdings).await?;
     let account_ids = holdings_account_ids(&context, &resolved.account_ids)?;
     if account_ids.len() == 1 {
         context
@@ -389,7 +387,7 @@ pub async fn get_holdings_by_allocation(
     let context = state.context()?;
     let base_currency = context.get_base_currency();
     let filter = filter.into_account_filter()?;
-    let resolved = resolve_scope(&filter, &context).await?;
+    let resolved = resolve_scope(&filter, &context, AccountPurpose::Holdings).await?;
     let account_ids = holdings_account_ids(&context, &resolved.account_ids)?;
     if account_ids.len() == 1 {
         context
@@ -448,7 +446,7 @@ pub async fn get_historical_valuations(
         let account_filter = input.into_account_filter()?;
         let resolved = context
             .portfolio_service()
-            .resolve_account_scope(&account_filter, &base_currency)
+            .resolve_aggregate_scope(&account_filter, &base_currency, AccountPurpose::Holdings)
             .map_err(|e| e.to_string())?;
         let account_ids = holdings_account_ids(context.as_ref(), &resolved.account_ids)?;
         if account_ids.is_empty() {
@@ -484,7 +482,7 @@ pub async fn get_historical_valuations(
         let base_currency = context.get_base_currency();
         let resolved = context
             .portfolio_service()
-            .resolve_account_scope(&AccountScope::All, &base_currency)
+            .resolve_aggregate_scope(&AccountScope::All, &base_currency, AccountPurpose::Holdings)
             .map_err(|e| e.to_string())?;
         let account_ids = holdings_account_ids(context.as_ref(), &resolved.account_ids)?;
         if account_ids.is_empty() {
@@ -529,6 +527,7 @@ pub async fn get_latest_valuations(
             .get_active_accounts()
             .map_err(|e| format!("Failed to fetch active accounts: {}", e))?
             .into_iter()
+            .filter(|acc| account_in_aggregate_scope(acc, AccountPurpose::Holdings))
             .map(|acc| acc.id)
             .collect::<Vec<_>>();
         holdings_account_ids(context.as_ref(), &active_ids)?
@@ -594,7 +593,7 @@ pub async fn get_income_summary(
     debug!("Fetching income summary...");
     let account_ids: Vec<String> = if let Some(input) = filter {
         let af = input.into_account_filter()?;
-        let resolved = resolve_scope(&af, &context).await?;
+        let resolved = resolve_scope(&af, &context, AccountPurpose::Income).await?;
         income_account_ids(&context, &resolved.account_ids)?
     } else {
         context
@@ -604,6 +603,7 @@ pub async fn get_income_summary(
             .into_iter()
             .filter(|account| {
                 account_supports_purpose(&account.account_type, AccountPurpose::Income)
+                    && account_in_aggregate_scope(account, AccountPurpose::Income)
             })
             .map(|account| account.id)
             .collect()
@@ -699,7 +699,7 @@ pub async fn calculate_performance_history(
         let account_filter = filter.into_account_filter()?;
         let resolved = context
             .portfolio_service()
-            .resolve_account_scope(&account_filter, &base_currency)
+            .resolve_aggregate_scope(&account_filter, &base_currency, AccountPurpose::Performance)
             .map_err(|e| e.to_string())?;
         let accounts_by_id = performance_accounts_by_id(context.as_ref(), &resolved.account_ids)?;
         let account_ids = performance_account_ids_from_map(&accounts_by_id, &resolved.account_ids);
@@ -828,7 +828,7 @@ pub async fn calculate_performance_summary(
         let account_filter = filter.into_account_filter()?;
         let resolved = context
             .portfolio_service()
-            .resolve_account_scope(&account_filter, &base_currency)
+            .resolve_aggregate_scope(&account_filter, &base_currency, AccountPurpose::Performance)
             .map_err(|e| e.to_string())?;
         let accounts_by_id = performance_accounts_by_id(context.as_ref(), &resolved.account_ids)?;
         let account_ids = performance_account_ids_from_map(&accounts_by_id, &resolved.account_ids);

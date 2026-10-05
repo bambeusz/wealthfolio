@@ -113,6 +113,75 @@ mod tests {
         );
     }
 
+    fn account_with_meta(meta: Option<&str>) -> Account {
+        Account {
+            meta: meta.map(String::from),
+            ..Account::default()
+        }
+    }
+
+    #[test]
+    fn portfolio_flags_default_to_included() {
+        for meta in [
+            None,
+            Some(""),
+            Some("not json"),
+            Some(r#"{"allocation":{"cashCategoryId":"EQUITY"}}"#),
+            Some(r#"{"portfolio":{}}"#),
+            Some(r#"{"portfolio":{"includeInNetWorth":"no"}}"#),
+        ] {
+            let account = account_with_meta(meta);
+            assert!(account.include_in_net_worth(), "meta: {meta:?}");
+            assert!(account.include_in_performance(), "meta: {meta:?}");
+        }
+    }
+
+    #[test]
+    fn portfolio_flags_read_each_flag_independently() {
+        let net_worth_off = account_with_meta(Some(
+            r#"{"allocation":{"cashCategoryId":"EQUITY"},"portfolio":{"includeInNetWorth":false}}"#,
+        ));
+        assert!(!net_worth_off.include_in_net_worth());
+        assert!(net_worth_off.include_in_performance());
+        // Other meta keys keep working next to the flags.
+        assert_eq!(
+            net_worth_off.cash_allocation_category_id(),
+            Some("EQUITY".to_string())
+        );
+
+        let performance_off =
+            account_with_meta(Some(r#"{"portfolio":{"includeInPerformance":false}}"#));
+        assert!(performance_off.include_in_net_worth());
+        assert!(!performance_off.include_in_performance());
+    }
+
+    #[test]
+    fn aggregate_scope_picks_the_flag_for_the_purpose() {
+        use crate::accounts::{account_in_aggregate_scope, AccountPurpose};
+
+        let net_worth_off = account_with_meta(Some(r#"{"portfolio":{"includeInNetWorth":false}}"#));
+        let performance_off =
+            account_with_meta(Some(r#"{"portfolio":{"includeInPerformance":false}}"#));
+
+        for purpose in [AccountPurpose::NetWorth, AccountPurpose::Holdings] {
+            assert!(!account_in_aggregate_scope(&net_worth_off, purpose));
+            assert!(account_in_aggregate_scope(&performance_off, purpose));
+        }
+        for purpose in [AccountPurpose::Performance, AccountPurpose::Income] {
+            assert!(account_in_aggregate_scope(&net_worth_off, purpose));
+            assert!(!account_in_aggregate_scope(&performance_off, purpose));
+        }
+        // Spending and the like never depend on the flags.
+        for purpose in [
+            AccountPurpose::Spending,
+            AccountPurpose::GoalFunding,
+            AccountPurpose::ContributionLimits,
+        ] {
+            assert!(account_in_aggregate_scope(&net_worth_off, purpose));
+            assert!(account_in_aggregate_scope(&performance_off, purpose));
+        }
+    }
+
     #[test]
     fn test_credit_card_rejects_holdings_tracking_mode() {
         let account = NewAccount {

@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@wealt
 import type { Account, AccountType, Platform } from "@/lib/types";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { getPortfolioFlagsFromMeta } from "@/lib/account-meta";
 import { AccountOperations } from "./account-operations";
 
 // Map account types to icons and colors for visual distinction
@@ -57,6 +58,7 @@ export function AccountItem({
     iconClass: "text-muted-foreground",
   };
   const IconComponent = typeConfig.icon;
+  const portfolioFlags = getPortfolioFlagsFromMeta(account.meta);
 
   return (
     <div className="flex items-center justify-between p-4">
@@ -135,6 +137,24 @@ export function AccountItem({
           <span className="inline-flex items-center gap-1 rounded-md border border-red-200/40 bg-red-100/30 px-2 py-1 text-xs font-medium text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
             <Icons.FileArchive className="h-3 w-3" />
             {t("settings:accounts.badge_archived")}
+          </span>
+        )}
+        {!portfolioFlags.includeInNetWorth && (
+          <span
+            data-testid="account-badge-excluded-net-worth"
+            className="text-muted-foreground inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium"
+          >
+            <Icons.EyeOff className="h-3 w-3" />
+            {t("settings:accounts.badge_excluded_net_worth")}
+          </span>
+        )}
+        {!portfolioFlags.includeInPerformance && (
+          <span
+            data-testid="account-badge-excluded-performance"
+            className="text-muted-foreground inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium"
+          >
+            <Icons.EyeOff className="h-3 w-3" />
+            {t("settings:accounts.badge_excluded_performance")}
           </span>
         )}
         {!account.isActive && !account.isArchived && (

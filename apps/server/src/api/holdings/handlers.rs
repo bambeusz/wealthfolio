@@ -6,7 +6,10 @@ use rust_decimal::Decimal;
 use wealthfolio_core::portfolios::{AccountScope, ResolvedAccountScope};
 use wealthfolio_core::utils::time_utils::{parse_user_timezone_or_default, user_today};
 use wealthfolio_core::{
-    accounts::{account_supports_purpose, AccountPurpose, AccountServiceTrait, TrackingMode},
+    accounts::{
+        account_in_aggregate_scope, account_supports_purpose, AccountPurpose, AccountServiceTrait,
+        TrackingMode,
+    },
     lots::AssetLotView,
     portfolio::{
         allocation::{AllocationHoldings, PortfolioAllocations},
@@ -44,7 +47,7 @@ fn resolve_scope(
     let base = state.base_currency.read().unwrap().clone();
     state
         .portfolio_service
-        .resolve_account_scope(filter, &base)
+        .resolve_aggregate_scope(filter, &base, AccountPurpose::Holdings)
         .map_err(crate::error::ApiError::from)
 }
 
@@ -63,20 +66,15 @@ fn resolve_current_valuation_scope(
     let base = state.base_currency.read().unwrap().clone();
     let resolved = state
         .portfolio_service
-        .resolve_account_scope(filter, &base)
+        .resolve_aggregate_scope(filter, &base, AccountPurpose::Holdings)
         .map_err(crate::error::ApiError::from)?;
 
+    // Portfolio members come from the already flag-filtered resolution; the
+    // valuation filter downstream still drops archived / ineligible accounts.
     let account_ids = match filter {
         AccountScope::Account { account_id } => vec![account_id.clone()],
         AccountScope::Accounts { account_ids } => unique_preserving_order(account_ids.clone()),
-        AccountScope::Portfolio { portfolio_id } => {
-            state
-                .portfolio_service
-                .get_portfolio(portfolio_id)
-                .map_err(crate::error::ApiError::from)?
-                .account_ids
-        }
-        AccountScope::All => resolved.account_ids.clone(),
+        AccountScope::Portfolio { .. } | AccountScope::All => resolved.account_ids.clone(),
     };
 
     Ok(ResolvedAccountScope {
@@ -352,6 +350,7 @@ pub async fn get_latest_valuations(
             .account_service
             .get_active_accounts()?
             .into_iter()
+            .filter(|a| account_in_aggregate_scope(a, AccountPurpose::Holdings))
             .map(|a| a.id)
             .collect();
     }

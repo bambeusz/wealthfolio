@@ -2684,3 +2684,62 @@ async fn test_liability_with_future_zero_quote_is_included_at_past_balance() {
     // Net worth = assets (0) - liabilities (180_000) = -180_000
     assert_eq!(result.net_worth, dec!(-180000));
 }
+
+fn account_left_out_of_net_worth(id: &str) -> Account {
+    let mut account = create_test_account(id, "SECURITIES", "USD");
+    account.meta = Some(r#"{"portfolio":{"includeInNetWorth":false}}"#.to_string());
+    account
+}
+
+#[tokio::test]
+async fn test_net_worth_skips_accounts_left_out_of_net_worth() {
+    let counted = create_test_account("acc-counted", "SECURITIES", "USD");
+    let left_out = account_left_out_of_net_worth("acc-left-out");
+    let mut counted_cash = HashMap::new();
+    counted_cash.insert("USD".to_string(), dec!(1000));
+    let mut left_out_cash = HashMap::new();
+    left_out_cash.insert("USD".to_string(), dec!(500));
+
+    let service = create_net_worth_service(
+        vec![counted, left_out],
+        vec![],
+        vec![
+            create_test_snapshot("acc-counted", vec![], counted_cash),
+            create_test_snapshot("acc-left-out", vec![], left_out_cash),
+        ],
+        vec![],
+    );
+
+    let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+    let result = service.get_net_worth(date).await.unwrap();
+
+    assert_eq!(result.net_worth, dec!(1000));
+    assert_eq!(get_category_value(&result, "cash"), dec!(1000));
+}
+
+#[test]
+fn test_net_worth_history_skips_accounts_left_out_of_net_worth() {
+    let d1 = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+    let d2 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+    let service = create_net_worth_service_with_valuations(
+        vec![
+            create_test_account("acc-counted", "SECURITIES", "USD"),
+            account_left_out_of_net_worth("acc-left-out"),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![
+            create_account_valuation("acc-counted", d1, dec!(1000)),
+            create_account_valuation("acc-counted", d2, dec!(1100)),
+            create_account_valuation("acc-left-out", d1, dec!(500)),
+            create_account_valuation("acc-left-out", d2, dec!(600)),
+        ],
+    );
+
+    let history = service.get_net_worth_history(d1, d2).unwrap();
+
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].portfolio_value, dec!(1000));
+    assert_eq!(history[1].portfolio_value, dec!(1100));
+}

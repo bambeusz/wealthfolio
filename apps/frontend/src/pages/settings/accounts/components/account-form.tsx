@@ -7,6 +7,12 @@ import * as z from "zod";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Switch } from "@wealthfolio/ui/components/ui/switch";
 
+import {
+  getCashCategoryFromMeta,
+  getPortfolioFlagsFromMeta,
+  setCashCategoryInMeta,
+  setPortfolioFlagsInMeta,
+} from "@/lib/account-meta";
 import { newAccountSchema } from "@/lib/schemas";
 import { AccountType } from "@/lib/constants";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
@@ -52,34 +58,6 @@ import { useAccountMutations } from "./use-account-mutations";
 
 const CASH_ALLOCATION_DEFAULT_VALUE = "__default__";
 const CASH_FIXED_INCOME_CATEGORY_ID = "FIXED_INCOME";
-
-function getCashCategoryFromMeta(meta?: string | null): string | null {
-  if (!meta) return null;
-  try {
-    const parsed = JSON.parse(meta) as Record<string, unknown>;
-    const allocation = parsed.allocation as Record<string, unknown> | undefined;
-    return (allocation?.cashCategoryId as string) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function setCashCategoryInMeta(meta: string | null | undefined, categoryId: string | null): string {
-  let parsed: Record<string, unknown> = {};
-  if (meta) {
-    try {
-      parsed = JSON.parse(meta) as Record<string, unknown>;
-    } catch {
-      // ignore
-    }
-  }
-  if (categoryId) {
-    parsed.allocation = { cashCategoryId: categoryId };
-  } else {
-    delete parsed.allocation;
-  }
-  return JSON.stringify(parsed);
-}
 
 function getSelectableCashCategoryFromMeta(meta?: string | null): string {
   const categoryId = getCashCategoryFromMeta(meta);
@@ -147,6 +125,7 @@ export function AccountForm({ defaultValues, onSuccess = () => undefined }: Acco
 
   const currentTrackingMode = form.watch("trackingMode");
   const currentAccountType = form.watch("accountType");
+  const portfolioFlags = getPortfolioFlagsFromMeta(form.watch("meta"));
   const isCreditCardAccount = currentAccountType === AccountType.CREDIT_CARD;
   const isCashAccount = currentAccountType === AccountType.CASH;
 
@@ -498,6 +477,62 @@ export function AccountForm({ defaultValues, onSuccess = () => undefined }: Acco
                     </FormItem>
                   )}
                 />
+
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <label
+                      htmlFor="account-include-in-net-worth"
+                      className="text-sm font-normal leading-none"
+                    >
+                      {t("settings:accounts.form_include_net_worth_label")}
+                      <span className="text-muted-foreground ml-1 text-xs font-normal">
+                        {t("settings:accounts.form_include_net_worth_hint")}
+                      </span>
+                    </label>
+                  </div>
+                  <Switch
+                    id="account-include-in-net-worth"
+                    data-testid="account-include-net-worth-switch"
+                    checked={portfolioFlags.includeInNetWorth}
+                    onCheckedChange={(checked) =>
+                      form.setValue(
+                        "meta",
+                        setPortfolioFlagsInMeta(form.getValues("meta"), {
+                          includeInNetWorth: checked,
+                        }),
+                        { shouldDirty: true },
+                      )
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <label
+                      htmlFor="account-include-in-performance"
+                      className="text-sm font-normal leading-none"
+                    >
+                      {t("settings:accounts.form_include_performance_label")}
+                      <span className="text-muted-foreground ml-1 text-xs font-normal">
+                        {t("settings:accounts.form_include_performance_hint")}
+                      </span>
+                    </label>
+                  </div>
+                  <Switch
+                    id="account-include-in-performance"
+                    data-testid="account-include-performance-switch"
+                    checked={portfolioFlags.includeInPerformance}
+                    onCheckedChange={(checked) =>
+                      form.setValue(
+                        "meta",
+                        setPortfolioFlagsInMeta(form.getValues("meta"), {
+                          includeInPerformance: checked,
+                        }),
+                        { shouldDirty: true },
+                      )
+                    }
+                  />
+                </div>
 
                 {defaultValues?.id && (
                   <FormField
