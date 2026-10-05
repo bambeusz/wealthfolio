@@ -91,6 +91,11 @@ const spend = (categoryId: string, actual: number, name = categoryId): BudgetCat
   hasDefaultTarget: false,
   hasMonthOverride: false,
   rolloverEnabled: false,
+  pacing: "linear",
+  dueDay: null,
+  expectedToDate: 0,
+  projected: 0,
+  paceStatus: "on_track",
 });
 
 const group = (id: string, categories: BudgetCategoryRow[], color: string | null = "#4F6B92") =>
@@ -965,6 +970,10 @@ describe("money flow against the spending insight", () => {
           daysRemaining: 0,
           projectedSpend: 0,
           expectedSpendToDate: 0,
+          fixedExpectedToDate: 0,
+          flexibleExpectedToDate: 0,
+          projectionReliable: false,
+          status: "on_track",
         },
         status: "on_track",
       },

@@ -55,6 +55,11 @@ import { getSpendingContext } from "@/features/spending/adapters/settings";
 import { getBudgetReadonly, upsertBudgetTarget } from "@/features/spending/adapters/budget";
 import { listEvents, listEventTypes } from "@/features/spending/adapters/events";
 import { getSpendingReport } from "@/features/spending/adapters/reports";
+import {
+  deleteBudgetTargets,
+  getBudget,
+  setBudgetTargets,
+} from "@/features/spending/adapters/budget";
 import { openCsvFileDialog, openFileSaveDialog } from "@/adapters";
 import { createGoal, getGoals, getGoalFunding, saveGoalFunding, updateGoal } from "@/adapters";
 import {
@@ -501,6 +506,10 @@ export function createAddonHostAPI(
       rerunCategorizationRulesForAddon: rerunCategorizationRules,
       listSpendingActivityExclusions,
       setActivitySpendingExclusion,
+
+      getBudget,
+      setBudgetTargets,
+      deleteBudgetTargets,
 
       getContributionLimit,
       createContributionLimit,

@@ -361,6 +361,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             "Change default and monthly budget targets",
         ),
         (
+            "budgets",
+            "budgets",
+            vec!["getGroups", "getTargets", "setTargets", "deleteTargets"],
+            "Access to read and write monthly spending budgets",
+        ),
+        (
             "settings",
             "settings",
             vec!["get", "update", "backupDatabase"],

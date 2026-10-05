@@ -57,9 +57,18 @@
     "spentUpper": "المنفق",
     "trendingHigh": "في ارتفاع",
     "underBudget": "أقل من الميزانية",
-    "vsLast3Months": "مقارنة بآخر 3 أشهر"
+    "vsLast3Months": "مقارنة بآخر 3 أشهر",
+    "dueOn": "يوم الاستحقاق {{day}}"
   },
   "budgetEditor": {
+    "pacingLabel": "وتيرة الإنفاق لـ {{name}}",
+    "pacingTitle": "متى يُنفق هذا المبلغ؟",
+    "pacingLinear": "توزيع متساوٍ",
+    "pacingLinearHint": "يُنفق تدريجيًا على مدار الشهر.",
+    "pacingMonthlyOnDay": "مستحق في يوم",
+    "pacingMonthlyOnDayHint": "يُدفع مرة واحدة في الشهر. يبقى على المسار الصحيح حتى هذا اليوم؛ واليوم الذي يتجاوز نهاية الشهر يقع في آخر أيامه.",
+    "pacingDueDay": "يوم الاستحقاق",
+    "pacingInvalidDay": "أدخل يومًا من 1 إلى 31.",
     "addCategoryTo": "إضافة فئة إلى {{name}}",
     "addSource": "إضافة مصدر (المتاح: {{count}})",
     "addSource_few": "إضافة مصدر ({{count}} مصادر متاحة)",

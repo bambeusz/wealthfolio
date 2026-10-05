@@ -169,8 +169,9 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
   {
     id: 'budgets',
     name: 'Budget Management',
-    description: 'Change default budget targets and monthly overrides',
-    functions: ['upsertBudgetTarget'],
+    description:
+      'View and change your monthly spending budgets: groups, default targets, monthly overrides and their pacing',
+    functions: ['upsertBudgetTarget', 'getGroups', 'getTargets', 'setTargets', 'deleteTargets'],
     riskLevel: 'high',
   },
   {

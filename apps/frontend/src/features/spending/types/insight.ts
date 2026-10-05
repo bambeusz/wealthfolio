@@ -1,4 +1,4 @@
-import type { BudgetGroup } from "./budget";
+import type { BudgetGroup, PaceStatus } from "./budget";
 import type { CategoryBreakdownRow } from "./report";
 
 export type CompareMode = "prior" | "year_over_year";
@@ -39,14 +39,19 @@ export interface AmountBlock {
 export type HealthStatus = "on_track" | "approaching" | "over" | "cashflow_negative";
 
 export interface PaceState {
-  /** Trailing-7-day average daily spend. */
+  /** Trailing-7-day average of flexible daily spend (once-a-month bills excluded). */
   dailyAvg: number;
   daysElapsed: number;
   daysRemaining: number;
-  /** spent_to_date + dailyAvg × daysRemaining. */
+  /** Σ fixed max(spent, budget) + flexible spent + dailyAvg × daysRemaining. */
   projectedSpend: number;
-  /** budget × daysElapsed / totalDays. */
+  /** Fixed budgets past their due day + flexible budget along the pace curve. */
   expectedSpendToDate: number;
+  fixedExpectedToDate: number;
+  flexibleExpectedToDate: number;
+  projectionReliable: boolean;
+  /** The window's on-track status — the same rule as the budget card. */
+  status: PaceStatus;
 }
 
 export interface Headline {

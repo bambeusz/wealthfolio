@@ -76,6 +76,11 @@ const spend = (categoryId: string, name: string, actual: number): BudgetCategory
   hasDefaultTarget: false,
   hasMonthOverride: false,
   rolloverEnabled: false,
+  pacing: "linear",
+  dueDay: null,
+  expectedToDate: 0,
+  projected: 0,
+  paceStatus: "on_track",
 });
 
 const needs: BudgetGroupRow = {

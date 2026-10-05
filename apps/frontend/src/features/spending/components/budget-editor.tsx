@@ -57,12 +57,14 @@ import type {
   BudgetCategoryRow,
   BudgetGroup,
   BudgetGroupRow,
+  BudgetPacing,
   BudgetRolloverSetting,
   BudgetSnapshot,
   BudgetTarget,
 } from "../types/budget";
 
 import { AmountInput } from "./amount-input";
+import { BudgetPacingPopover } from "./budget-pacing-popover";
 import { CategoryIcon } from "./category-chips";
 import { EXTENDED_PALETTE } from "./color-picker";
 import { IconPicker } from "./icon-picker";
@@ -71,6 +73,14 @@ import { badgeVariants } from "@wealthfolio/ui";
 const SPENDING_TAXONOMY = "spending_categories";
 
 export type BudgetEditorMode = "setup" | "monthly";
+
+/** `target` is the row stored for the period being edited, when there is one. */
+type SaveCategoryPacing = (
+  row: BudgetCategoryRow,
+  target: BudgetTarget | undefined,
+  pacing: BudgetPacing,
+  dueDay: number | null,
+) => void;
 
 interface BudgetEditorProps {
   mode: BudgetEditorMode;
@@ -110,6 +120,20 @@ export function BudgetEditor({ mode, periodKey }: BudgetEditorProps) {
       taxonomyId: row.taxonomyId,
       categoryId: row.categoryId,
       amount: amount || "0",
+    });
+  };
+
+  // Setup edits the default row; the monthly view writes an override for this
+  // month, keeping the amount it shows.
+  const saveCategoryPacing: SaveCategoryPacing = (row, target, pacing, dueDay) => {
+    mutations.upsertTarget.mutate({
+      periodKey: periodForWrite,
+      targetType: "category",
+      taxonomyId: row.taxonomyId,
+      categoryId: row.categoryId,
+      amount: target?.amount ?? String(row.target),
+      pacing,
+      dueDay,
     });
   };
 
@@ -160,6 +184,7 @@ export function BudgetEditor({ mode, periodKey }: BudgetEditorProps) {
           categoryPool={allCategoryPool}
           onSaveGroupBuffer={saveGroupBuffer}
           onSaveCategoryTarget={saveCategoryTarget}
+          onSaveCategoryPacing={saveCategoryPacing}
           onDeleteOverride={deleteMonthOverride}
           onMoveCategory={(categoryId, groupId) =>
             mutations.assignCategory.mutate({ categoryId, groupId })
@@ -471,6 +496,7 @@ function GroupBudgetSection({
   deletePending,
   onSaveGroupBuffer,
   onSaveCategoryTarget,
+  onSaveCategoryPacing,
   onDeleteOverride,
   onMoveCategory,
   onUpdateGroup,
@@ -491,6 +517,7 @@ function GroupBudgetSection({
   deletePending: boolean;
   onSaveGroupBuffer: (row: BudgetGroupRow, amount: string) => void;
   onSaveCategoryTarget: (row: BudgetCategoryRow, amount: string) => void;
+  onSaveCategoryPacing: SaveCategoryPacing;
   onDeleteOverride: (target: BudgetTarget | undefined) => void;
   onMoveCategory: (categoryId: string, groupId: string) => void;
   onUpdateGroup: (patch: { name?: string; color?: string | null; icon?: string | null }) => void;
@@ -721,6 +748,7 @@ function GroupBudgetSection({
               mode={mode}
               groupRolloverEnabled={row.rolloverEnabled}
               onSaveTarget={onSaveCategoryTarget}
+              onSavePacing={onSaveCategoryPacing}
               onDeleteOverride={onDeleteOverride}
               onMoveCategory={onMoveCategory}
               onToggleRollover={onToggleCategoryRollover}
@@ -1130,6 +1158,7 @@ function BudgetCategoryLine({
   mode,
   groupRolloverEnabled,
   onSaveTarget,
+  onSavePacing,
   onDeleteOverride,
   onMoveCategory,
   onToggleRollover,
@@ -1143,6 +1172,7 @@ function BudgetCategoryLine({
   mode: BudgetEditorMode;
   groupRolloverEnabled: boolean;
   onSaveTarget: (row: BudgetCategoryRow, amount: string) => void;
+  onSavePacing: SaveCategoryPacing;
   onDeleteOverride: (target: BudgetTarget | undefined) => void;
   onMoveCategory: (categoryId: string, groupId: string) => void;
   onToggleRollover: (row: BudgetCategoryRow, enabled: boolean) => void;
@@ -1167,6 +1197,13 @@ function BudgetCategoryLine({
       <span className="text-foreground min-w-0 flex-1 truncate">
         {getCategoryLabel(t, row.taxonomyId, row.categoryId, row.name)}
       </span>
+
+      <BudgetPacingPopover
+        categoryName={getCategoryLabel(t, row.taxonomyId, row.categoryId, row.name)}
+        pacing={row.pacing}
+        dueDay={row.dueDay}
+        onSave={(pacing, dueDay) => onSavePacing(row, target, pacing, dueDay)}
+      />
 
       <div className="relative w-20 shrink-0">
         <AmountInput value={row.target} onCommit={(value) => onSaveTarget(row, value)} />

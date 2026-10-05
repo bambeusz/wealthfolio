@@ -205,6 +205,8 @@ export const COMMANDS: CommandMap = {
   get_budget_readonly: { method: "GET", path: "/spending/budget/snapshot" },
   get_spending_context: { method: "GET", path: "/spending/context" },
   upsert_budget_target: { method: "POST", path: "/spending/budget/targets" },
+  set_budget_targets: { method: "POST", path: "/spending/budget/targets/bulk" },
+  delete_budget_targets: { method: "POST", path: "/spending/budget/targets/bulk-delete" },
   delete_budget_target: { method: "DELETE", path: "/spending/budget/targets" },
   upsert_budget_rollover_setting: { method: "POST", path: "/spending/budget/rollovers" },
   delete_budget_rollover_setting: { method: "DELETE", path: "/spending/budget/rollovers" },
@@ -1309,6 +1311,16 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       };
       addPeriodKey(periodKey);
       body = JSON.stringify(target);
+      break;
+    }
+    case "set_budget_targets": {
+      const { periodKey, targets } = payload as { periodKey: string; targets: unknown[] };
+      body = JSON.stringify({ periodKey, targets });
+      break;
+    }
+    case "delete_budget_targets": {
+      const { periodKey, ids } = payload as { periodKey: string; ids: string[] };
+      body = JSON.stringify({ periodKey, ids });
       break;
     }
     case "delete_budget_target": {

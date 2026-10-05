@@ -30,6 +30,7 @@ export type {
 export type {
   ActivitySearchFilters,
   ActivitySort,
+  BudgetsAPI,
   HostAPI,
   NetworkAuth,
   NetworkAPI,

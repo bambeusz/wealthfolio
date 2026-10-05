@@ -84,6 +84,11 @@ function budgetSnapshot(
                   hasDefaultTarget: false,
                   hasMonthOverride: false,
                   rolloverEnabled: false,
+                  pacing: "linear",
+                  dueDay: null,
+                  expectedToDate: 0,
+                  projected: 0,
+                  paceStatus: "on_track",
                 },
               ]
             : [],
@@ -101,6 +106,7 @@ function budgetSnapshot(
         rolloverOut: 0,
         overspentCount: 0,
       },
+      pace: null,
     },
   };
 }

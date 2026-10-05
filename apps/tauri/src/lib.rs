@@ -365,6 +365,8 @@ pub fn run() {
             commands::spending::get_budget_readonly,
             commands::spending::get_spending_context,
             commands::spending::upsert_budget_target,
+            commands::spending::set_budget_targets,
+            commands::spending::delete_budget_targets,
             commands::spending::delete_budget_target,
             commands::spending::upsert_budget_rollover_setting,
             commands::spending::delete_budget_rollover_setting,
