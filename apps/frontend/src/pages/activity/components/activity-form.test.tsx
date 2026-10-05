@@ -28,12 +28,18 @@ vi.mock("./activity-type-picker", () => ({
     value,
     onSelect,
     includeReclassificationTypes,
+    allowedTypes,
   }: {
     value?: string;
     onSelect: (type: string) => void;
     includeReclassificationTypes?: boolean;
+    allowedTypes?: readonly string[];
   }) => (
-    <div data-testid="type-picker" data-value={value ?? ""}>
+    <div
+      data-testid="type-picker"
+      data-value={value ?? ""}
+      data-allowed={allowedTypes?.join(",") ?? ""}
+    >
       <button type="button" onClick={() => onSelect(ActivityType.DEPOSIT)}>
         pick deposit
       </button>
@@ -188,6 +194,110 @@ describe("ActivityForm reclassification", () => {
       expect(renderedType()).toBe(activityType);
     },
   );
+
+  it("offers Change type for an editable stored type and hides the picker until it is used", async () => {
+    const user = userEvent.setup();
+    renderForm(activity("act_1", ActivityType.WITHDRAWAL));
+
+    expect(screen.queryByTestId("type-picker")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Change type" }));
+    expect(screen.getByTestId("type-picker")).toBeInTheDocument();
+    // The stored form stays until a replacement is picked.
+    expect(renderedType()).toBe(ActivityType.WITHDRAWAL);
+
+    await user.click(screen.getByRole("button", { name: "pick deposit" }));
+    expect(renderedType()).toBe(ActivityType.DEPOSIT);
+
+    await user.click(screen.getByRole("button", { name: "Keep type" }));
+    expect(screen.queryByTestId("type-picker")).not.toBeInTheDocument();
+    expect(renderedType()).toBe(ActivityType.WITHDRAWAL);
+  });
+
+  it("does not offer Change type when creating or for a type without an editor", () => {
+    const { unmount } = render(<ActivityForm accounts={reclassificationAccounts} open />);
+    expect(screen.queryByRole("button", { name: "Change type" })).not.toBeInTheDocument();
+    unmount();
+
+    renderForm(activity("act_1", ActivityType.UNKNOWN));
+    expect(screen.queryByRole("button", { name: "Change type" })).not.toBeInTheDocument();
+  });
+
+  // The Spending ledger opens its transfer editor with hidePicker, because a
+  // new transfer is already typed; editing a leg must still be able to retype it.
+  describe("with hidePicker (Spending ledger entry point)", () => {
+    it("still offers Change type for a linked transfer leg, limited to the allowed types", async () => {
+      const user = userEvent.setup();
+      render(
+        <ActivityForm
+          accounts={reclassificationAccounts}
+          open
+          hidePicker
+          allowedTypes={["DEPOSIT", "WITHDRAWAL", "TRANSFER"]}
+          activity={{ ...activity("act_1", ActivityType.TRANSFER_OUT), sourceGroupId: "group-1" }}
+        />,
+      );
+
+      expect(screen.queryByTestId("type-picker")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Change type" }));
+      expect(screen.getByTestId("type-picker")).toHaveAttribute(
+        "data-allowed",
+        "DEPOSIT,WITHDRAWAL,TRANSFER",
+      );
+
+      await user.click(screen.getByRole("button", { name: "pick deposit" }));
+      expect(renderedType()).toBe(ActivityType.DEPOSIT);
+      expect(screen.getByText(/unlinks the pair first/)).toBeInTheDocument();
+    });
+
+    it("still hides the picker when creating", () => {
+      render(
+        <ActivityForm
+          accounts={reclassificationAccounts}
+          open
+          hidePicker
+          activity={{ activityType: ActivityType.TRANSFER_OUT, accountId: "acc_1" }}
+        />,
+      );
+
+      expect(screen.queryByTestId("type-picker")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Change type" })).not.toBeInTheDocument();
+      expect(renderedType()).toBe("TRANSFER");
+    });
+  });
+
+  it("warns that leaving a linked transfer unlinks it", async () => {
+    const user = userEvent.setup();
+    renderForm({
+      ...activity("act_1", ActivityType.TRANSFER_OUT),
+      sourceGroupId: "group-1",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Change type" }));
+    expect(screen.queryByText(/unlinks the pair first/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "pick deposit" }));
+    expect(screen.getByText(/unlinks the pair first/)).toBeInTheDocument();
+  });
+
+  it("resets the Change type picker when a different activity is opened", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderForm(activity("act_1", ActivityType.WITHDRAWAL));
+
+    await user.click(screen.getByRole("button", { name: "Change type" }));
+    expect(screen.getByTestId("type-picker")).toBeInTheDocument();
+
+    rerender(
+      <ActivityForm
+        accounts={reclassificationAccounts}
+        open
+        onClose={vi.fn()}
+        activity={activity("act_2", ActivityType.WITHDRAWAL)}
+      />,
+    );
+
+    expect(screen.queryByTestId("type-picker")).not.toBeInTheDocument();
+  });
 
   it("drops the picked type when a different activity is opened", async () => {
     const user = userEvent.setup();

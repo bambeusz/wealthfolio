@@ -498,4 +498,140 @@ describe("useActivityForm", () => {
       }),
     );
   });
+
+  describe("changing the type of an existing activity", () => {
+    const cashFormData = {
+      accountId: "acc-usd",
+      activityDate: new Date("2026-02-01T10:00:00.000Z"),
+      amount: 40,
+      comment: "changed",
+      currency: "USD",
+    } as ActivityFormValues;
+
+    it("drops the stored asset when a BUY becomes a DEPOSIT", async () => {
+      const { result } = renderHook(() =>
+        useActivityForm({
+          accounts,
+          selectedType: "DEPOSIT",
+          activity: {
+            id: "buy-1",
+            activityType: ActivityType.BUY,
+            accountId: "acc-usd",
+            assetId: "asset-1",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(cashFormData);
+      });
+
+      expect(mutationMocks.updateMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "buy-1",
+          activityType: ActivityType.DEPOSIT,
+          clearAsset: true,
+          currentAssetId: undefined,
+        }),
+      );
+      expect(mutationMocks.unlinkMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("unlinks a linked transfer leg first when it becomes a WITHDRAWAL", async () => {
+      adapterMocks.getTransferPairForActivity.mockResolvedValue({
+        transferOut: { id: "transfer-out-id" },
+        transferIn: { id: "transfer-in-id" },
+      });
+
+      const { result } = renderHook(() =>
+        useActivityForm({
+          accounts,
+          selectedType: "WITHDRAWAL",
+          activity: {
+            id: "transfer-out-id",
+            activityType: ActivityType.TRANSFER_OUT,
+            accountId: "acc-usd",
+            sourceGroupId: "group-1",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(cashFormData);
+      });
+
+      expect(mutationMocks.unlinkMutateAsync).toHaveBeenCalledWith({
+        activityAId: "transfer-out-id",
+        activityBId: "transfer-in-id",
+      });
+      expect(mutationMocks.updateMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "transfer-out-id",
+          activityType: ActivityType.WITHDRAWAL,
+          // Clears the external-transfer flag the unlink left behind.
+          metadata: { flow: {} },
+        }),
+      );
+      expect(mutationMocks.unlinkMutateAsync.mock.invocationCallOrder[0]).toBeLessThan(
+        mutationMocks.updateMutateAsync.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("does not unlink or clear anything when the type is unchanged", async () => {
+      const { result } = renderHook(() =>
+        useActivityForm({
+          accounts,
+          selectedType: "DEPOSIT",
+          activity: {
+            id: "deposit-1",
+            activityType: ActivityType.DEPOSIT,
+            accountId: "acc-usd",
+            assetId: "asset-1",
+            sourceGroupId: "group-1",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(cashFormData);
+      });
+
+      expect(mutationMocks.unlinkMutateAsync).not.toHaveBeenCalled();
+      expect(mutationMocks.updateMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "deposit-1", clearAsset: false, currentAssetId: "asset-1" }),
+      );
+    });
+
+    it("opens a changed-to-TRANSFER form as an external transfer and refuses an internal one", async () => {
+      const { result } = renderHook(() =>
+        useActivityForm({
+          accounts,
+          selectedType: "TRANSFER",
+          activity: {
+            id: "withdrawal-1",
+            activityType: ActivityType.WITHDRAWAL,
+            accountId: "acc-usd",
+          },
+        }),
+      );
+
+      expect(result.current.defaultValues).toEqual(
+        expect.objectContaining({ isExternal: true, direction: "out", accountId: "acc-usd" }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          isExternal: false,
+          fromAccountId: "acc-usd",
+          toAccountId: "acc-cad",
+          activityDate: new Date("2026-02-01T10:00:00.000Z"),
+          transferMode: "cash",
+          amount: 10,
+        } as ActivityFormValues);
+      });
+
+      expect(mutationMocks.savePairMutateAsync).not.toHaveBeenCalled();
+      expect(mutationMocks.updateMutateAsync).not.toHaveBeenCalled();
+    });
+  });
 });

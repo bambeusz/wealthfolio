@@ -43,8 +43,14 @@ interface ActivityFormProps {
   activity?: Partial<ActivityDetails>;
   open?: boolean;
   onClose?: () => void;
-  /** When true, hides the activity type picker (use when type is already determined) */
+  /**
+   * When true, hides the type picker while creating (the caller has already
+   * determined the type). Editing still offers "Change type", so a stored type
+   * can be corrected.
+   */
   hidePicker?: boolean;
+  /** Restricts the types the picker offers. Defaults to all types. */
+  allowedTypes?: readonly string[];
 }
 
 export function ActivityForm({
@@ -54,6 +60,7 @@ export function ActivityForm({
   open,
   onClose,
   hidePicker,
+  allowedTypes,
 }: ActivityFormProps) {
   const { t } = useTranslation();
   // Derive the editing state and stored type from activity prop
@@ -83,7 +90,26 @@ export function ActivityForm({
   // The stored type stands unless it has no editor, in which case the user's
   // pick stands in for it.
   const effectiveSelectedType = pickedType ?? (storedTypeIsEditable ? storedType : undefined);
-  const showPicker = !hidePicker && (!isEditing || !storedTypeIsEditable);
+
+  // "Change type" opens the picker for a row whose stored type does have an
+  // editor. Like the pick, it belongs to the row it was opened for.
+  const [changeTypeFor, setChangeTypeFor] = useState<string | undefined>(undefined);
+  const changingType = isEditing && changeTypeFor === activity?.id;
+  const canChangeType = isEditing && storedTypeIsEditable;
+  const showPicker = isEditing ? !storedTypeIsEditable || changingType : !hidePicker;
+  const handleCancelChangeType = useCallback(() => {
+    setChangeTypeFor(undefined);
+    setPick(undefined);
+  }, []);
+
+  const typeChanged =
+    isEditing && storedTypeIsEditable && !!pickedType && pickedType !== storedType;
+  const leavesLinkedTransfer =
+    typeChanged &&
+    storedType === "TRANSFER" &&
+    !!activity?.sourceGroupId &&
+    pickedType !== "TRANSFER";
+  const becomesTransfer = typeChanged && pickedType === "TRANSFER";
 
   // Filter accounts by selected activity type (exclude HOLDINGS accounts for unsupported types).
   // Transfers use the full account list so spending/saving accounts are valid counterparties.
@@ -118,6 +144,7 @@ export function ActivityForm({
       if (!isOpen) {
         // Reset the picked type when sheet closes
         setPick(undefined);
+        setChangeTypeFor(undefined);
         onClose?.();
       }
     },
@@ -157,17 +184,54 @@ export function ActivityForm({
               <span className="bg-primary/10 text-primary rounded-md px-2 py-1 font-medium">
                 {storedType ?? activity?.activityType}
               </span>
+              {canChangeType && !changingType && (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => setChangeTypeFor(activity?.id)}
+                >
+                  {t("activity:change_type")}
+                </Button>
+              )}
+              {canChangeType && changingType && (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={handleCancelChangeType}
+                >
+                  {t("activity:keep_type")}
+                </Button>
+              )}
             </div>
           )}
 
-          {/* Activity Type Picker - when creating, and when editing a row whose
-              stored type has no editor of its own */}
+          {/* Activity Type Picker - when creating, when editing a row whose
+              stored type has no editor of its own, and once "Change type" is
+              chosen */}
           {showPicker && (
             <ActivityTypePicker
               value={pickedType}
               onSelect={handleSelectType}
+              allowedTypes={allowedTypes}
               includeReclassificationTypes={isEditing && !storedTypeIsEditable}
             />
+          )}
+
+          {leavesLinkedTransfer && (
+            <Alert>
+              <Icons.AlertCircle className="h-4 w-4" />
+              <AlertDescription>{t("activity:type_change_unlinks_transfer")}</AlertDescription>
+            </Alert>
+          )}
+          {becomesTransfer && (
+            <Alert>
+              <Icons.AlertCircle className="h-4 w-4" />
+              <AlertDescription>{t("activity:type_change_to_transfer_hint")}</AlertDescription>
+            </Alert>
           )}
 
           {/* Render the appropriate form */}

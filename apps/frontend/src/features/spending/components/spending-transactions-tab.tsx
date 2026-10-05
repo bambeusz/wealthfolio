@@ -98,6 +98,20 @@ const INCOME_TAXONOMY = "income_sources";
 const SAVINGS_TAXONOMY = "savings_categories";
 
 /**
+ * Types a ledger row may be changed to from the transfer editor: the cash
+ * types a Spending account holds. Trades and the like are not offered.
+ */
+const LEDGER_CHANGE_TYPES: readonly string[] = [
+  ActivityType.DEPOSIT,
+  ActivityType.WITHDRAWAL,
+  ActivityType.FEE,
+  ActivityType.INTEREST,
+  ActivityType.TAX,
+  ActivityType.CREDIT,
+  "TRANSFER",
+];
+
+/**
  * Starting heights for virtualized rows, taken from the rendered layouts. They
  * only have to be close: every row reports its real height once measured, and
  * the estimate just keeps the scrollbar honest for rows still below the fold.
@@ -1293,6 +1307,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
               open={showTransferForm}
               onClose={handleTransferFormClose}
               hidePicker
+              allowedTypes={LEDGER_CHANGE_TYPES}
             />
           ))}
 

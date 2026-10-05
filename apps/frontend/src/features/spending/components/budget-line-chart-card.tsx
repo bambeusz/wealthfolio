@@ -711,7 +711,7 @@ const BudgetManageLink = ({ monthKey }: { monthKey: string }) => {
   );
 };
 
-function BudgetRing({
+export function BudgetRing({
   ring,
   currency,
   activityRange,
@@ -748,8 +748,12 @@ function BudgetRing({
       to={`/activities?tab=spending&category=${encodeURIComponent(ring.categoryId)}&from=${
         activityRange.from
       }&to=${activityRange.to}`}
-      className="hover:bg-muted/40 flex w-16 shrink-0 flex-col items-center gap-1 rounded-md px-1 py-1 transition-colors"
-      title={`${ring.name}: ${ring.spent.toFixed(2)} / ${ring.target.toFixed(2)}`}
+      className="hover:bg-muted/40 flex w-20 min-w-0 shrink-0 flex-col items-center gap-1 rounded-md px-1 py-1 transition-colors"
+      title={
+        isBalanceHidden
+          ? ring.name
+          : `${ring.name}: ${formatting.formatAmount(ring.spent, currency)} / ${formatting.formatAmount(ring.target, currency)}`
+      }
     >
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90">
@@ -780,7 +784,10 @@ function BudgetRing({
           <CategoryIcon icon={ring.icon} fallback={ring.name} className="h-5 w-5" />
         </div>
       </div>
-      <div className="text-foreground text-xs font-semibold tabular-nums">
+      <div
+        className="text-foreground max-w-full truncate whitespace-nowrap text-xs font-semibold tabular-nums"
+        title={isBalanceHidden ? undefined : formatting.formatAmount(displayAmount, currency)}
+      >
         {isBalanceHidden ? "••••" : formatting.formatCompactAmount(displayAmount, currency)}
       </div>
       <div
