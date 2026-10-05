@@ -23,6 +23,7 @@ use wealthfolio_storage_sqlite::db;
 use wealthfolio_storage_sqlite::fx::FxRepository;
 use wealthfolio_storage_sqlite::spending::activity_assignments::ActivityTaxonomyAssignmentRepository;
 use wealthfolio_storage_sqlite::spending::activity_events::ActivityEventsRepository;
+use wealthfolio_storage_sqlite::spending::activity_exclusions::ActivityExclusionsRepository;
 use wealthfolio_storage_sqlite::spending::activity_splits::ActivitySplitRepository;
 use wealthfolio_storage_sqlite::spending::budget::BudgetRepository;
 use wealthfolio_storage_sqlite::spending::events::{EventTypesRepository, EventsRepository};
@@ -72,6 +73,10 @@ impl Fixture {
             pool.clone(),
             writer.clone(),
         ))));
+        let exclusions = Arc::new(ActivityExclusionsRepository::new(
+            pool.clone(),
+            writer.clone(),
+        ));
         let service = BudgetService::new(
             budget_repo.clone(),
             activity_repo.clone(),
@@ -81,6 +86,7 @@ impl Fixture {
             settings.clone(),
             taxonomy.clone(),
             fx.clone(),
+            exclusions.clone(),
         );
         let activity_events = Arc::new(ActivityEventsRepository::new(pool.clone(), writer.clone()));
         let events = Arc::new(EventsService::new(
@@ -99,6 +105,7 @@ impl Fixture {
             events,
             fx.clone(),
             activity_events,
+            exclusions.clone(),
         );
         let insight = InsightService::new(
             budget_repo,
@@ -109,6 +116,7 @@ impl Fixture {
             settings.clone(),
             taxonomy,
             fx.clone(),
+            exclusions,
         );
         let fixture = Self {
             pool,

@@ -22,8 +22,10 @@ use super::traits::BudgetRepositoryTrait;
 use crate::activity_allocations::{group_assignments, group_splits, SplitsByActivity};
 use crate::activity_assignments::ActivityTaxonomyAssignmentRepositoryTrait;
 use crate::activity_classification::{
-    activity_abs_amount, classify_activity_for_aggregation, decimal_to_f64, neutral_transfer_groups,
+    activity_abs_amount, classify_for_totals, decimal_to_f64, neutral_transfer_groups,
+    ActivityExclusionIndex,
 };
+use crate::activity_exclusions::ActivityExclusionsRepositoryTrait;
 use crate::activity_splits::ActivitySplitRepositoryTrait;
 use crate::category_exclusions::{split_spending_allocations, ExclusionIndex};
 use crate::error::SpendingError;
@@ -207,6 +209,7 @@ pub struct BudgetService {
     spending_settings: Arc<SpendingSettingsService>,
     taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
     fx_service: Arc<dyn wealthfolio_core::fx::FxServiceTrait>,
+    activity_exclusions: Arc<dyn ActivityExclusionsRepositoryTrait>,
 }
 
 impl BudgetService {
@@ -220,6 +223,7 @@ impl BudgetService {
         spending_settings: Arc<SpendingSettingsService>,
         taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
         fx_service: Arc<dyn wealthfolio_core::fx::FxServiceTrait>,
+        activity_exclusions: Arc<dyn ActivityExclusionsRepositoryTrait>,
     ) -> Self {
         Self {
             repo,
@@ -230,6 +234,7 @@ impl BudgetService {
             spending_settings,
             taxonomy_service,
             fx_service,
+            activity_exclusions,
         }
     }
 
@@ -1178,13 +1183,15 @@ impl BudgetService {
         let exclusions = ExclusionIndex::new(&settings.excluded_category_ids, meta.spending);
         let no_exclusions = ExclusionIndex::empty();
         let mut calculation_quality = crate::CalculationQuality::default();
+        let activity_exclusions =
+            ActivityExclusionIndex::new(self.activity_exclusions.list_all().await?);
         let mut actuals: HashMap<String, MonthActuals> = HashMap::new();
         for activity in activities {
             let Some(account_type) = account_types.get(&activity.account_id) else {
                 continue;
             };
             let classification =
-                classify_activity_for_aggregation(&activity, account_type, &transfer_groups);
+                classify_for_totals(&activity, account_type, &transfer_groups, &activity_exclusions);
             let amount = activity_abs_amount(&activity);
             let spending_native = classification.spending_amount(amount);
             let income_native = classification.income_amount(amount);
@@ -1945,7 +1952,9 @@ mod tests {
     use chrono::{NaiveDate, NaiveDateTime};
     use wealthfolio_core::fx::{ExchangeRate, FxServiceTrait, NewExchangeRate};
 
-    use crate::activity_classification::within_spending_transfer_groups;
+    use crate::activity_classification::{
+        classify_activity_for_aggregation, within_spending_transfer_groups,
+    };
 
     use super::*;
 

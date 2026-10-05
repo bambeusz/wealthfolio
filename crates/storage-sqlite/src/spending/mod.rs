@@ -4,6 +4,7 @@
 
 pub mod activity_assignments;
 pub mod activity_events;
+pub mod activity_exclusions;
 pub mod activity_splits;
 pub(crate) mod activity_sync;
 pub mod budget;

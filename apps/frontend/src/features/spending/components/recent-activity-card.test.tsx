@@ -50,4 +50,30 @@ describe("RecentActivityCard", () => {
     expect(row?.textContent).toContain("€");
     expect(row?.textContent).not.toContain("$");
   });
+
+  it("marks a row excluded from Spending instead of asking to tag it", () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const row = (id: string, notes: string, excludedFromSpending: boolean) =>
+      ({
+        id,
+        accountId: "acc-1",
+        activityDate: day,
+        activityType: "WITHDRAWAL",
+        amount: "40",
+        currency: "USD",
+        notes,
+        excludedFromSpending,
+      }) as unknown as Activity;
+
+    renderRecentActivityCard([row("1", "Card sweep", true), row("2", "Bakery", false)]);
+
+    const excluded = screen.getByText("Card sweep").closest("a");
+    expect(excluded?.textContent).toContain("Excluded");
+    expect(excluded?.textContent).not.toContain("Uncategorized");
+    expect(excluded?.querySelector(".tabular-nums")).toHaveClass("text-muted-foreground");
+
+    const counted = screen.getByText("Bakery").closest("a");
+    expect(counted?.textContent).not.toContain("Excluded");
+    expect(counted?.textContent).toContain("Uncategorized");
+  });
 });

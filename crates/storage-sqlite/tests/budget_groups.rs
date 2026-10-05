@@ -19,6 +19,7 @@ use wealthfolio_storage_sqlite::activities::ActivityRepository;
 use wealthfolio_storage_sqlite::db;
 use wealthfolio_storage_sqlite::fx::FxRepository;
 use wealthfolio_storage_sqlite::spending::activity_assignments::ActivityTaxonomyAssignmentRepository;
+use wealthfolio_storage_sqlite::spending::activity_exclusions::ActivityExclusionsRepository;
 use wealthfolio_storage_sqlite::spending::activity_splits::ActivitySplitRepository;
 use wealthfolio_storage_sqlite::spending::budget::BudgetRepository;
 use wealthfolio_storage_sqlite::spending::settings::SpendingSettingsRepository;
@@ -63,6 +64,10 @@ impl Fixture {
             pool.clone(),
             writer.clone(),
         ))));
+        let exclusions = Arc::new(ActivityExclusionsRepository::new(
+            pool.clone(),
+            writer.clone(),
+        ));
         let service = BudgetService::new(
             budget_repo.clone(),
             activity_repo.clone(),
@@ -72,6 +77,7 @@ impl Fixture {
             settings.clone(),
             taxonomy.clone(),
             fx.clone(),
+            exclusions.clone(),
         );
         let insight = InsightService::new(
             budget_repo.clone(),
@@ -82,6 +88,7 @@ impl Fixture {
             settings.clone(),
             taxonomy,
             fx,
+            exclusions,
         );
         settings
             .update(SpendingSettingsUpdate {

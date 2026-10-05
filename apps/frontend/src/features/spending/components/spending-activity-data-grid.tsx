@@ -95,6 +95,7 @@ export interface SpendingGridRowActions {
   onLinkTransfer: (row: TransactionRowVM) => void;
   onUnlinkTransfer: (row: TransactionRowVM) => void;
   onLoanPayment: (row: TransactionRowVM) => void;
+  onToggleSpendingExclusion: (row: TransactionRowVM) => void;
 }
 
 interface SpendingActivityDataGridProps extends SpendingGridRowActions {
@@ -140,6 +141,7 @@ export function SpendingActivityDataGrid({
   onLinkTransfer,
   onUnlinkTransfer,
   onLoanPayment,
+  onToggleSpendingExclusion,
 }: SpendingActivityDataGridProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -300,6 +302,7 @@ export function SpendingActivityDataGrid({
       onLinkTransfer: requireSaved(onLinkTransfer),
       onUnlinkTransfer: requireSaved(onUnlinkTransfer),
       onLoanPayment: requireSaved(onLoanPayment),
+      onToggleSpendingExclusion: requireSaved(onToggleSpendingExclusion),
       onDuplicate: handleDuplicate,
       onDelete: handleDelete,
     }),
@@ -311,6 +314,7 @@ export function SpendingActivityDataGrid({
       onLinkTransfer,
       onLoanPayment,
       onMarkReimbursement,
+      onToggleSpendingExclusion,
       onUnlinkTransfer,
       requireSaved,
     ],
