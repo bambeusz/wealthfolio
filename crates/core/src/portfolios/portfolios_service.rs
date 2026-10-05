@@ -5,8 +5,8 @@ use super::portfolios_model::{
 };
 use super::portfolios_traits::{PortfolioRepositoryTrait, PortfolioServiceTrait};
 use crate::accounts::{
-    account_in_portfolio_scope, account_supports_portfolio_scope, AccountPurpose,
-    AccountRepositoryTrait,
+    account_in_aggregate_scope, account_in_portfolio_scope, account_supports_portfolio_scope,
+    AccountPurpose, AccountRepositoryTrait,
 };
 use crate::errors::{DatabaseError, Result, ValidationError};
 use crate::Error;
@@ -162,13 +162,39 @@ impl PortfolioServiceTrait for PortfolioService {
         })
     }
 
-    fn resolve_account_scope_for_purpose(
+    fn resolve_aggregate_scope(
         &self,
         filter: &AccountScope,
         base_currency: &str,
         purpose: AccountPurpose,
     ) -> Result<ResolvedAccountScope> {
         let mut resolved = self.resolve_account_scope(filter, base_currency)?;
+        if !matches!(filter, AccountScope::All | AccountScope::Portfolio { .. })
+            || resolved.account_ids.is_empty()
+        {
+            return Ok(resolved);
+        }
+        let accounts = self
+            .account_repository
+            .list(None, None, Some(&resolved.account_ids))?;
+        let included: HashSet<String> = accounts
+            .into_iter()
+            .filter(|account| account_in_aggregate_scope(account, purpose))
+            .map(|account| account.id)
+            .collect();
+        resolved
+            .account_ids
+            .retain(|account_id| included.contains(account_id));
+        Ok(resolved)
+    }
+
+    fn resolve_account_scope_for_purpose(
+        &self,
+        filter: &AccountScope,
+        base_currency: &str,
+        purpose: AccountPurpose,
+    ) -> Result<ResolvedAccountScope> {
+        let mut resolved = self.resolve_aggregate_scope(filter, base_currency, purpose)?;
         if resolved.account_ids.is_empty() {
             return Ok(resolved);
         }

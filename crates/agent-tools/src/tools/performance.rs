@@ -4,7 +4,9 @@ use chrono::{Datelike, Local, NaiveDate};
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use wealthfolio_core::accounts::{account_supports_portfolio_scope, AccountPurpose};
+use wealthfolio_core::accounts::{
+    account_in_aggregate_scope, account_supports_portfolio_scope, AccountPurpose,
+};
 use wealthfolio_core::portfolio::performance::PerformanceResult as CorePerformanceResult;
 
 use crate::env::AgentEnvironment;
@@ -272,6 +274,7 @@ impl AgentTool for GetPerformance {
                 .into_iter()
                 .filter(|account| {
                     account_supports_portfolio_scope(account, AccountPurpose::Performance)
+                        && account_in_aggregate_scope(account, AccountPurpose::Performance)
                 })
                 .map(|account| {
                     account_tracking_modes.insert(account.id.clone(), account.tracking_mode);

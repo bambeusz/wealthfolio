@@ -61,6 +61,19 @@ pub trait PortfolioServiceTrait: Send + Sync {
         })
     }
 
+    /// Resolve an AccountScope for a multi-account aggregate (dashboard totals, charts,
+    /// allocation, income). `All` and `Portfolio` scopes drop accounts the user left out
+    /// of net worth / performance (see `account_in_aggregate_scope`); an explicit
+    /// `Account` or `Accounts` selection is returned as-is. The default does not filter.
+    fn resolve_aggregate_scope(
+        &self,
+        filter: &AccountScope,
+        base_currency: &str,
+        _purpose: AccountPurpose,
+    ) -> Result<ResolvedAccountScope> {
+        self.resolve_account_scope(filter, base_currency)
+    }
+
     /// Resolve an AccountScope and keep only accounts eligible for a product surface.
     fn resolve_account_scope_for_purpose(
         &self,

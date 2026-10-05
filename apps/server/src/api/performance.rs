@@ -8,8 +8,8 @@ use axum::{
 };
 use wealthfolio_core::{
     accounts::{
-        account_supports_portfolio_scope, account_supports_purpose, Account, AccountPurpose,
-        AccountServiceTrait, TrackingMode,
+        account_in_aggregate_scope, account_supports_portfolio_scope, account_supports_purpose,
+        Account, AccountPurpose, AccountServiceTrait, TrackingMode,
     },
     portfolio::{
         income::IncomeSummary,
@@ -46,6 +46,7 @@ async fn calculate_accounts_simple_performance(
             .into_iter()
             .filter(|account| {
                 account_supports_purpose(&account.account_type, AccountPurpose::Performance)
+                    && account_in_aggregate_scope(account, AccountPurpose::Performance)
             })
             .map(|account| account.id)
             .collect()
@@ -154,7 +155,7 @@ async fn calculate_performance_history(
             .clone();
         let resolved = state
             .portfolio_service
-            .resolve_account_scope(filter, &base)
+            .resolve_aggregate_scope(filter, &base, AccountPurpose::Performance)
             .map_err(crate::error::ApiError::from)?;
         let accounts_by_id = performance_accounts_by_id(&state, &resolved.account_ids)?;
         let account_ids = performance_account_ids_from_map(&accounts_by_id, &resolved.account_ids);
@@ -247,7 +248,7 @@ async fn calculate_performance_summary(
             .clone();
         let resolved = state
             .portfolio_service
-            .resolve_account_scope(filter, &base)
+            .resolve_aggregate_scope(filter, &base, AccountPurpose::Performance)
             .map_err(crate::error::ApiError::from)?;
         let accounts_by_id = performance_accounts_by_id(&state, &resolved.account_ids)?;
         let account_ids = performance_account_ids_from_map(&accounts_by_id, &resolved.account_ids);
@@ -462,6 +463,7 @@ async fn get_income_summary_for_account(
             .into_iter()
             .filter(|account| {
                 account_supports_purpose(&account.account_type, AccountPurpose::Income)
+                    && account_in_aggregate_scope(account, AccountPurpose::Income)
             })
             .map(|account| account.id)
             .collect()
@@ -492,6 +494,7 @@ async fn get_income_summary(
             .into_iter()
             .filter(|account| {
                 account_supports_purpose(&account.account_type, AccountPurpose::Income)
+                    && account_in_aggregate_scope(account, AccountPurpose::Income)
             })
             .map(|account| account.id)
             .collect(),
@@ -503,7 +506,7 @@ async fn get_income_summary(
                 .clone();
             let resolved = state
                 .portfolio_service
-                .resolve_account_scope(filter, &base)
+                .resolve_aggregate_scope(filter, &base, AccountPurpose::Income)
                 .map_err(crate::error::ApiError::from)?;
             account_ids_for_purpose(&state, &resolved.account_ids, AccountPurpose::Income)?
         }

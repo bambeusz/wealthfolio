@@ -12,7 +12,10 @@ use super::net_worth_model::{
     NetWorthResponse, StaleAssetInfo, ValuationInfo,
 };
 use super::net_worth_traits::NetWorthServiceTrait;
-use crate::accounts::{account_types, is_liability_account_type, AccountRepositoryTrait};
+use crate::accounts::{
+    account_in_aggregate_scope, account_types, is_liability_account_type, Account, AccountPurpose,
+    AccountRepositoryTrait,
+};
 use crate::assets::loan::{manual_loan_principal, LoanPayment};
 use crate::assets::{AlternativeAssetRepositoryTrait, Asset, AssetKind, AssetRepositoryTrait};
 use crate::constants::DECIMAL_PRECISION;
@@ -127,6 +130,15 @@ impl NetWorthService {
                 (loan_id, dated)
             })
             .collect())
+    }
+
+    /// Non-archived accounts that count toward net worth. Accounts the user left out
+    /// (`meta.portfolio.includeInNetWorth = false`) still get snapshots/valuations; they
+    /// are only skipped here.
+    fn net_worth_accounts(&self) -> Result<Vec<Account>> {
+        let mut accounts = self.account_repository.list(None, Some(false), None)?;
+        accounts.retain(|a| account_in_aggregate_scope(a, AccountPurpose::NetWorth));
+        Ok(accounts)
     }
 
     /// Determine the asset category based on account type.
@@ -459,7 +471,7 @@ impl NetWorthServiceTrait for NetWorthService {
         debug!("Calculating net worth as of {} in {}", date, base_currency);
 
         // Get all non-archived accounts (includes closed accounts for historical net worth)
-        let accounts = self.account_repository.list(None, Some(false), None)?;
+        let accounts = self.net_worth_accounts()?;
 
         // Get account IDs
         let account_ids: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
@@ -891,7 +903,7 @@ impl NetWorthService {
         }
 
         let mut portfolio_by_date: BTreeMap<NaiveDate, PortfolioState> = BTreeMap::new();
-        let accounts = self.account_repository.list(None, Some(false), None)?;
+        let accounts = self.net_worth_accounts()?;
         for account in accounts {
             // Liability accounts (e.g. credit cards) are tracked separately as
             // liabilities/cash assets below; excluding them here avoids double-counting.
@@ -1062,7 +1074,7 @@ impl NetWorthService {
         // =====================================================================
         // 5. Load credit card liability valuations
         // =====================================================================
-        let accounts = self.account_repository.list(None, Some(false), None)?;
+        let accounts = self.net_worth_accounts()?;
         let credit_card_account_ids: Vec<String> = accounts
             .iter()
             .filter(|account| is_liability_account_type(&account.account_type))

@@ -8,6 +8,7 @@ import type { Account, AccountType, Platform } from "@/lib/types";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { SettingsListMedia, SettingsListRow } from "@/components/settings-list";
+import { getPortfolioFlagsFromMeta } from "@/lib/account-meta";
 import { AccountOperations } from "./account-operations";
 
 // Each account type's icon, shown when the account has no platform logo.
@@ -40,6 +41,7 @@ export function AccountItem({
   const isSynced = !!account.providerAccountId;
   const IconComponent = accountTypeIcon[account.accountType] ?? Icons.Wallet;
   const maskedNumber = maskAccountNumber(account.accountNumber);
+  const portfolioFlags = getPortfolioFlagsFromMeta(account.meta);
 
   return (
     <SettingsListRow
@@ -77,6 +79,26 @@ export function AccountItem({
             <Badge variant="destructive-subtle">
               <Icons.FileArchive className="me-1 h-3 w-3" />
               {t("settings:accounts.badge_archived")}
+            </Badge>
+          )}
+          {!portfolioFlags.includeInNetWorth && (
+            <Badge
+              variant="outline"
+              className="text-muted-foreground"
+              data-testid="account-badge-excluded-net-worth"
+            >
+              <Icons.EyeOff className="me-1 h-3 w-3" />
+              {t("settings:accounts.badge_excluded_net_worth")}
+            </Badge>
+          )}
+          {!portfolioFlags.includeInPerformance && (
+            <Badge
+              variant="outline"
+              className="text-muted-foreground"
+              data-testid="account-badge-excluded-performance"
+            >
+              <Icons.EyeOff className="me-1 h-3 w-3" />
+              {t("settings:accounts.badge_excluded_performance")}
             </Badge>
           )}
           {!account.isActive && !account.isArchived && (

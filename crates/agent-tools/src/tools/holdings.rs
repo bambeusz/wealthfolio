@@ -3,7 +3,9 @@
 use rust_decimal::{prelude::ToPrimitive, Decimal};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use wealthfolio_core::accounts::{account_supports_purpose, AccountPurpose};
+use wealthfolio_core::accounts::{
+    account_in_aggregate_scope, account_supports_purpose, AccountPurpose,
+};
 use wealthfolio_core::assets::InstrumentType;
 use wealthfolio_core::holdings::Holding;
 
@@ -247,6 +249,7 @@ impl AgentTool for GetHoldings {
                 .into_iter()
                 .filter(|account| {
                     account_supports_purpose(&account.account_type, AccountPurpose::Holdings)
+                        && account_in_aggregate_scope(account, AccountPurpose::Holdings)
                 })
                 .map(|account| account.id)
                 .collect();

@@ -3,6 +3,7 @@
 import { calculatePerformanceSummaries, performanceSummaryScopeKey } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useCurrentAccountValuations } from "@/hooks/use-current-account-valuations";
+import { accountInAggregateScope } from "@/lib/account-meta";
 import { AccountPurpose } from "@/lib/constants";
 import { performanceSummaryReturn, performancePeriodPnl } from "@/lib/performance";
 import { QueryKeys } from "@/lib/query-keys";
@@ -69,6 +70,7 @@ function getDashboardAccountPerformanceScopes(
   accounts: Account[],
   accountsGrouped: boolean,
   expandedGroups: Record<string, boolean>,
+  performanceExcludedIds: ReadonlySet<string> = new Set(),
 ): PerformanceSummaryScope[] {
   const scopes: PerformanceSummaryScope[] = [];
   const seenScopeKeys = new Set<string>();
@@ -99,11 +101,14 @@ function getDashboardAccountPerformanceScopes(
   for (const [groupName, groupAccounts] of groupedAccounts) {
     if (!groupAccounts.some((account) => account.isActive)) continue;
 
-    addPerformanceScope(
-      scopes,
-      seenScopeKeys,
-      groupAccounts.map((account) => account.id),
-    );
+    // A group's performance leaves out accounts the user excluded from performance;
+    // each account's own row still gets its single-account scope when expanded.
+    const groupPerformanceIds = groupAccounts
+      .map((account) => account.id)
+      .filter((id) => !performanceExcludedIds.has(id));
+    if (groupPerformanceIds.length > 0) {
+      addPerformanceScope(scopes, seenScopeKeys, groupPerformanceIds);
+    }
 
     if (expandedGroups[groupName]) {
       groupAccounts
@@ -418,12 +423,24 @@ export const AccountsSummary = React.memo(
       error: errorAccounts,
     } = useAccounts({ accountPurpose: AccountPurpose.PERFORMANCE, filterActive: false });
 
+    // Accounts left out of net worth are not part of the dashboard (their value is also
+    // missing from the portfolio-wide valuation these rows are matched against).
     const accounts = useMemo(
       () =>
-        selectedAccountIds === undefined
+        (selectedAccountIds === undefined
           ? allAccounts
-          : allAccounts.filter((account) => selectedAccountIds.includes(account.id)),
+          : allAccounts.filter((account) => selectedAccountIds.includes(account.id))
+        ).filter((account) => accountInAggregateScope(account, AccountPurpose.NET_WORTH)),
       [allAccounts, selectedAccountIds],
+    );
+    const performanceExcludedIds = useMemo(
+      () =>
+        new Set(
+          accounts
+            .filter((account) => !accountInAggregateScope(account, AccountPurpose.PERFORMANCE))
+            .map((account) => account.id),
+        ),
+      [accounts],
     );
 
     const accountIds = useMemo(() => accounts?.map((acc) => acc.id) ?? [], [accounts]);
@@ -446,8 +463,13 @@ export const AccountsSummary = React.memo(
     const datesReady = isAllTime || (!!startDate && !!endDate);
 
     const performanceScopes = useMemo((): PerformanceSummaryScope[] => {
-      return getDashboardAccountPerformanceScopes(accounts, accountsGrouped, expandedGroups);
-    }, [accounts, accountsGrouped, expandedGroups]);
+      return getDashboardAccountPerformanceScopes(
+        accounts,
+        accountsGrouped,
+        expandedGroups,
+        performanceExcludedIds,
+      );
+    }, [accounts, accountsGrouped, expandedGroups, performanceExcludedIds]);
     const shouldFetchPerformance = datesReady && performanceScopes.length > 0;
 
     const {
@@ -624,10 +646,12 @@ export const AccountsSummary = React.memo(
 
           const baseCurrency = groupAccounts[0]?.baseCurrency ?? settings?.baseCurrency ?? "USD";
           // Totals span every group member, hidden included, so value and gain are computed
-          // over the same set — and match the scope key emitted for this group.
+          // over the same set — and match the scope key emitted for this group. Gain leaves
+          // out accounts excluded from performance, as that scope key does.
           const groupAccountIds = groupAccounts
             .map((account) => account.accountId)
-            .filter((id): id is string => Boolean(id));
+            .filter((id): id is string => Boolean(id))
+            .filter((id) => !performanceExcludedIds.has(id));
           const groupPerformance =
             performanceSummaries?.[performanceSummaryScopeKey(groupAccountIds)];
 
@@ -748,6 +772,7 @@ export const AccountsSummary = React.memo(
       isLoadingCurrentValuations,
       isLoadingPerformanceQueries,
       performanceSummaries,
+      performanceExcludedIds,
       isErrorAccounts,
       errorAccounts,
       settings?.baseCurrency,
