@@ -3,9 +3,11 @@ import { isActivityEditCancelled } from "@/features/spending/components/activity
 import { getTransferPairForActivity, logger } from "@/adapters";
 import { buildAssetResolutionInput } from "@/lib/asset-resolution-input";
 import { ACTIVITY_SUBTYPES, ActivityStatus, ActivityType } from "@/lib/constants";
+import { isCashSymbol } from "@/lib/activity-utils";
 import { generateId } from "@/lib/id";
 import type { ActivityCreate, ActivityDetails, ActivityUpdate } from "@/lib/types";
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { AccountSelectOption } from "../components/forms/fields";
 import type { NewActivityFormValues } from "../components/forms/schemas";
@@ -14,9 +16,11 @@ import type { AdjustmentFormValues } from "../components/forms/adjustment-form";
 import type { ConversionFormValues } from "../components/forms/conversion-form";
 import {
   ACTIVITY_FORM_CONFIG,
+  hasActivityForm,
   type ActivityFormValues,
   type PickerActivityType,
 } from "../config/activity-form-config";
+import { isPureCashActivity, mapActivityTypeToPicker } from "../utils/activity-form-utils";
 import { useActivityMutations } from "./use-activity-mutations";
 import { conversionFirstDate, isLeavingConversionRow } from "../utils/conversion-counterpart";
 
@@ -160,11 +164,13 @@ export function useActivityForm({
   selectedType,
   onSuccess,
 }: UseActivityFormParams): UseActivityFormReturn {
+  const { t } = useTranslation();
   const {
     addActivityMutation,
     updateActivityMutation,
     saveActivitiesMutation,
     saveInternalTransferPairMutation,
+    unlinkTransferActivitiesMutation,
   } = useActivityMutations(onSuccess);
 
   const isEditing = !!activity?.id;
@@ -172,29 +178,90 @@ export function useActivityForm({
     addActivityMutation.isPending ||
     updateActivityMutation.isPending ||
     saveActivitiesMutation.isPending ||
-    saveInternalTransferPairMutation.isPending;
+    saveInternalTransferPairMutation.isPending ||
+    unlinkTransferActivitiesMutation.isPending;
   const error =
     [
       addActivityMutation.error,
       updateActivityMutation.error,
       saveActivitiesMutation.error,
       saveInternalTransferPairMutation.error,
+      unlinkTransferActivitiesMutation.error,
     ].find((error) => error != null && !isActivityEditCancelled(error)) ?? null;
   const isError = error !== null;
 
   // Get config for selected type (undefined if no type selected)
   const config = selectedType ? ACTIVITY_FORM_CONFIG[selectedType] : undefined;
 
+  // The user swapped an already-editable stored type for another one ("Change
+  // type"). A row stored without an editor (UNKNOWN) being classified for the
+  // first time is not a change of type, so it keeps the plain edit behaviour.
+  const storedPickerType = mapActivityTypeToPicker(activity?.activityType);
+  const typeChanged =
+    isEditing &&
+    !!selectedType &&
+    hasActivityForm(storedPickerType) &&
+    storedPickerType !== selectedType;
+
   // Compute default values only for selected type (lazy evaluation)
   const defaultValues = useMemo(() => {
     if (!config) return undefined;
-    return config.getDefaults(activity, accounts);
-  }, [config, activity, accounts]);
+    const defaults = config.getDefaults(activity, accounts);
+    if (typeChanged && selectedType === "TRANSFER") {
+      // A non-transfer row cannot become one leg of an internal transfer by
+      // editing it: the other leg does not exist. Open it as an external
+      // transfer on its own account; pairing is a separate "Link transfer" step.
+      return {
+        ...defaults,
+        isExternal: true,
+        direction: activity?.activityType === ActivityType.DEPOSIT ? "in" : "out",
+        accountId: activity?.accountId ?? "",
+        fromAccountId: "",
+        toAccountId: "",
+      } as Partial<ActivityFormValues>;
+    }
+    return defaults;
+  }, [config, activity, accounts, typeChanged, selectedType]);
 
   // Single submit handler that uses config transform
   const handleSubmit = useCallback(
     async (formData: ActivityFormValues) => {
       if (!config) return;
+
+      // Detach the edited row from its linked transfer pair, so the row can be
+      // saved on its own. Both legs become standalone external transfers; the
+      // other leg is kept, not deleted or retyped.
+      const unlinkLinkedPair = async (linked: Partial<ActivityDetails> & { id: string }) => {
+        let { transferOutId, transferInId } = transferPairIds(linked);
+        if (linked.sourceGroupId && (!transferOutId || !transferInId)) {
+          try {
+            const pair = await getTransferPairForActivity(linked.id);
+            if (pair) {
+              transferOutId = pair.transferOut.id;
+              transferInId = pair.transferIn.id;
+            }
+          } catch {
+            // Invalid/orphan groups are cleared by the single-row update that follows.
+          }
+        }
+        if (linked.sourceGroupId && transferOutId && transferInId) {
+          await unlinkTransferActivitiesMutation.mutateAsync({
+            activityAId: transferOutId,
+            activityBId: transferInId,
+          });
+        }
+      };
+
+      // A type change to one without an asset must detach the stored asset
+      // explicitly: the update keeps it unless told otherwise. Cash placeholders
+      // are not assets.
+      const dropsStoredAsset =
+        typeChanged &&
+        !!activity?.assetId &&
+        !isCashSymbol(activity.assetId) &&
+        (isPureCashActivity(config.activityType) ||
+          (selectedType === "TRANSFER" &&
+            (formData as TransferFormValues).transferMode !== "securities"));
 
       try {
         // A conversion saves its two rows together, created or edited.
@@ -243,6 +310,10 @@ export function useActivityForm({
         // Handle internal transfers specially - need to create two activities
         if (selectedType === "TRANSFER") {
           const transferData = formData as TransferFormValues;
+
+          if (typeChanged && !transferData.isExternal) {
+            throw new Error(t("activity:type_change_to_transfer_hint"));
+          }
 
           // Internal transfer: update or create both legs
           if (!transferData.isExternal && transferData.fromAccountId && transferData.toAccountId) {
@@ -435,12 +506,14 @@ export function useActivityForm({
                 : undefined;
             await updateActivityMutation.mutateAsync({
               id: activity.id,
-              currentAssetId: activity.assetId,
+              currentAssetId: dropsStoredAsset ? undefined : activity.assetId,
+              clearAsset: dropsStoredAsset,
               unlinkTransferPairId,
               ...submitData,
             } as NewActivityFormValues & {
               id: string;
               currentAssetId?: string;
+              clearAsset?: boolean;
               unlinkTransferPairId?: string;
             });
           } else {
@@ -476,16 +549,30 @@ export function useActivityForm({
         }
 
         if (isEditing && activity?.id) {
-          const currentAssetId =
+          // Leaving a transfer type while still linked: unlink first, exactly as
+          // an external-transfer edit does, so the other leg is not left
+          // pointing at a row that is no longer a transfer.
+          const leavesTransfer =
+            typeChanged &&
+            (activity.activityType === ActivityType.TRANSFER_IN ||
+              activity.activityType === ActivityType.TRANSFER_OUT);
+          if (leavesTransfer) {
+            await unlinkLinkedPair({ ...activity, id: activity.id });
+            // The unlink marks the leg as an external transfer. That flag only
+            // means something to transfers and CREDIT (where it makes the row an
+            // external flow / contribution), so a leg retyped to CREDIT would
+            // silently keep counting. The backend merges metadata patches over
+            // the stored blob by top-level key, so an empty `flow` overwrites it.
+            (submitData as { metadata?: Record<string, unknown> }).metadata = {
+              ...(submitData as { metadata?: Record<string, unknown> }).metadata,
+              flow: {},
+            };
+          }
+          const adjustmentCash =
             selectedType === ActivityType.ADJUSTMENT &&
-            (formData as AdjustmentFormValues).adjustmentMode === "cash"
-              ? undefined
-              : activity.assetId;
-          const clearAsset = Boolean(
-            activity.assetId &&
-            selectedType === ActivityType.ADJUSTMENT &&
-            (formData as AdjustmentFormValues).adjustmentMode === "cash",
-          );
+            (formData as AdjustmentFormValues).adjustmentMode === "cash";
+          const currentAssetId = adjustmentCash || dropsStoredAsset ? undefined : activity.assetId;
+          const clearAsset = Boolean(activity.assetId && (adjustmentCash || dropsStoredAsset));
           await updateActivityMutation.mutateAsync({
             id: activity.id,
             currentAssetId,
@@ -512,10 +599,13 @@ export function useActivityForm({
       isEditing,
       activity,
       selectedType,
+      typeChanged,
+      t,
       addActivityMutation,
       updateActivityMutation,
       saveActivitiesMutation,
       saveInternalTransferPairMutation,
+      unlinkTransferActivitiesMutation,
       onSuccess,
     ],
   );
