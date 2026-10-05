@@ -6,6 +6,8 @@ use wealthfolio_core::accounts::account_types;
 use wealthfolio_core::activities::Activity;
 use wealthfolio_core::portfolio::economic_events::ActivityEconomicsResolver;
 
+use crate::activity_exclusions::ActivityExclusion;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SpendingClassification {
     Income,
@@ -91,6 +93,78 @@ pub(crate) fn classify_activity_for_aggregation(
                 _ => SpendingClassification::InternalTransfer,
             };
         }
+    }
+    classify_activity(activity, account_type)
+}
+
+/// Activities the user excluded from Spending, resolved for the totals layer.
+///
+/// A transfer leg also counts as excluded when its `source_group_id` belongs
+/// to an excluded activity, so excluding either leg takes the pair out — the
+/// saving bucket is decided on the outbound leg, while the user may well have
+/// clicked the other one, which totals never even load.
+#[derive(Debug, Default)]
+pub(crate) struct ActivityExclusionIndex {
+    ids: HashSet<String>,
+    groups: HashSet<String>,
+}
+
+impl ActivityExclusionIndex {
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn new(exclusions: Vec<ActivityExclusion>) -> Self {
+        let mut index = Self::default();
+        for exclusion in exclusions {
+            if let Some(group) = exclusion.group_id.filter(|g| !g.trim().is_empty()) {
+                index.groups.insert(group);
+            }
+            index.ids.insert(exclusion.activity_id);
+        }
+        index
+    }
+
+    pub(crate) fn is_excluded(&self, activity: &Activity) -> bool {
+        if self.ids.contains(&activity.id) {
+            return true;
+        }
+        // Only transfers pair through the group; other rows that happen to
+        // share a source group are separate transactions.
+        matches!(activity.effective_type(), "TRANSFER_IN" | "TRANSFER_OUT")
+            && activity
+                .source_group_id
+                .as_deref()
+                .is_some_and(|group| self.groups.contains(group))
+    }
+}
+
+/// The classifier every spending TOTAL must use: `classify_activity_for_aggregation`
+/// with the user's per-activity exclusions applied, so an excluded row adds
+/// nothing to spending, income, saving or refunds. Ledger visibility and the
+/// row's displayed bucket keep the raw classifiers.
+pub(crate) fn classify_for_totals(
+    activity: &Activity,
+    account_type: &str,
+    within_spending_groups: &HashSet<String>,
+    exclusions: &ActivityExclusionIndex,
+) -> SpendingClassification {
+    if exclusions.is_excluded(activity) {
+        return SpendingClassification::Ignored;
+    }
+    classify_activity_for_aggregation(activity, account_type, within_spending_groups)
+}
+
+/// `classify_activity` with exclusions applied, for totals that only read the
+/// spending/income amounts (where linked transfers are neutral either way).
+pub(crate) fn classify_plain_for_totals(
+    activity: &Activity,
+    account_type: &str,
+    exclusions: &ActivityExclusionIndex,
+) -> SpendingClassification {
+    if exclusions.is_excluded(activity) {
+        return SpendingClassification::Ignored;
     }
     classify_activity(activity, account_type)
 }
@@ -530,6 +604,111 @@ mod tests {
                 account_types::CREDIT_CARD
             ),
             SpendingClassification::InternalTransfer
+        );
+    }
+
+    fn exclusion(activity_id: &str, group_id: Option<&str>) -> ActivityExclusion {
+        ActivityExclusion {
+            activity_id: activity_id.to_string(),
+            group_id: group_id.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn excluded_expense_is_ignored_by_totals_but_keeps_its_raw_bucket() {
+        let expense = activity("WITHDRAWAL", None);
+        let exclusions = ActivityExclusionIndex::new(vec![exclusion("activity-1", None)]);
+        let none = HashSet::new();
+
+        let totals = classify_for_totals(&expense, account_types::CASH, &none, &exclusions);
+        assert_eq!(totals, SpendingClassification::Ignored);
+        assert_eq!(totals.spending_amount(Decimal::new(100, 0)), Decimal::ZERO);
+        assert_eq!(
+            classify_plain_for_totals(&expense, account_types::CASH, &exclusions),
+            SpendingClassification::Ignored
+        );
+        // The ledger still sees the real classification.
+        assert_eq!(
+            classify_activity(&expense, account_types::CASH),
+            SpendingClassification::Expense
+        );
+    }
+
+    #[test]
+    fn excluded_refund_and_income_drop_out_of_their_buckets() {
+        let exclusions = ActivityExclusionIndex::new(vec![exclusion("activity-1", None)]);
+        let refund = activity_with_subtype("CREDIT", Some("REFUND"), None);
+        let deposit = activity("DEPOSIT", None);
+        for row in [&refund, &deposit] {
+            let c = classify_plain_for_totals(row, account_types::CASH, &exclusions);
+            assert_eq!(c.spending_amount(Decimal::new(100, 0)), Decimal::ZERO);
+            assert_eq!(c.income_amount(Decimal::new(100, 0)), Decimal::ZERO);
+        }
+    }
+
+    #[test]
+    fn excluded_saving_transfer_contributes_no_saving() {
+        let out = activity("TRANSFER_OUT", Some("pair-s"));
+        let within = within_spending_transfer_groups(&[&out]);
+        let exclusions = ActivityExclusionIndex::new(vec![exclusion("activity-1", Some("pair-s"))]);
+
+        let c = classify_for_totals(&out, account_types::CASH, &within, &exclusions);
+        assert_eq!(c, SpendingClassification::Ignored);
+        assert_eq!(c.saving_amount(Decimal::new(100, 0)), Decimal::ZERO);
+        assert_eq!(
+            classify_activity_for_aggregation(&out, account_types::CASH, &within),
+            SpendingClassification::Saving
+        );
+    }
+
+    #[test]
+    fn excluding_the_other_leg_excludes_the_pair_through_the_group() {
+        // The user excluded the inbound leg on the savings account, which the
+        // spending totals never load; the outbound leg follows via its group.
+        let out = activity("TRANSFER_OUT", Some("pair-g"));
+        let within = within_spending_transfer_groups(&[&out]);
+        let exclusions =
+            ActivityExclusionIndex::new(vec![exclusion("savings-leg", Some("pair-g"))]);
+
+        assert_eq!(
+            classify_for_totals(&out, account_types::CASH, &within, &exclusions),
+            SpendingClassification::Ignored
+        );
+        // A transfer in another group is untouched.
+        let other = activity("TRANSFER_OUT", Some("pair-other"));
+        assert_eq!(
+            classify_for_totals(&other, account_types::CASH, &within, &exclusions),
+            SpendingClassification::Saving
+        );
+    }
+
+    #[test]
+    fn unlinked_single_leg_exclusion_matches_by_id_only() {
+        let exclusions = ActivityExclusionIndex::new(vec![exclusion("activity-1", None)]);
+        let none = HashSet::new();
+        let out = activity("TRANSFER_OUT", None);
+        assert_eq!(
+            classify_for_totals(&out, account_types::CASH, &none, &exclusions),
+            SpendingClassification::Ignored
+        );
+
+        let mut other = activity("TRANSFER_OUT", None);
+        other.id = "activity-2".to_string();
+        assert_eq!(
+            classify_for_totals(&other, account_types::CASH, &none, &exclusions),
+            SpendingClassification::Expense
+        );
+    }
+
+    #[test]
+    fn group_match_applies_to_transfers_only() {
+        let exclusions =
+            ActivityExclusionIndex::new(vec![exclusion("transfer-leg", Some("shared-group"))]);
+        let mut fee = activity("FEE", Some("shared-group"));
+        fee.id = "fee-1".to_string();
+        assert_eq!(
+            classify_plain_for_totals(&fee, account_types::CASH, &exclusions),
+            SpendingClassification::Expense
         );
     }
 }

@@ -183,6 +183,7 @@ export function TransactionsFilterBar({
     { value: "needs_review", label: t("spending:filters.statusNeedsReview") },
     { value: "uncategorized", label: t("spending:filters.statusUncategorized") },
     { value: "categorized", label: t("spending:filters.statusCategorized") },
+    { value: "excluded", label: t("spending:exclusion.statusFilter") },
   ];
   const controlFiltersActive =
     statusFilter !== "all" ||

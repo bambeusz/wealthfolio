@@ -988,5 +988,14 @@
     "addSource_other": "Add source ({{count}} available)",
     "overridesTitle_one": "Override · {{count}}",
     "overridesTitle_other": "Overrides · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "Exclude from Spending",
+    "include": "Include in Spending",
+    "badge": "Excluded",
+    "badgeHint": "Left out of Spending totals. Still counts in the account balance.",
+    "statusFilter": "Excluded from Spending",
+    "excluded": "Excluded from Spending",
+    "included": "Included in Spending again"
   }
 }

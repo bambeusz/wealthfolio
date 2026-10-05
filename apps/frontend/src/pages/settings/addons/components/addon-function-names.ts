@@ -78,6 +78,8 @@ export const FUNCTION_DISPLAY_NAMES: Record<string, string> = {
   "spending.saveRule": "Create or update auto-categorization rules",
   "spending.deleteRule": "Delete auto-categorization rules",
   "spending.rerunRules": "Re-apply categorization rules to your transactions",
+  "spending.listExclusions": "See which transactions are excluded from Spending",
+  "spending.setExclusion": "Exclude transactions from Spending totals",
 
   // ContributionLimitsAPI functions
   "contributionLimits.getAll": "View contribution limits",

@@ -688,7 +688,8 @@ export type CashActivityStatusFilter =
   | 'all'
   | 'needs_review'
   | 'uncategorized'
-  | 'categorized';
+  | 'categorized'
+  | 'excluded';
 export type CashActivitySortField = 'date' | 'amount';
 export type CashActivitySortDirection = 'asc' | 'desc';
 
@@ -725,6 +726,24 @@ export interface CashActivity extends Activity {
   netAmountBase?: number | null;
   /** Signed spending in the activity's own currency, after excluded portions are removed. */
   visibleSpendingAmount?: number;
+  /**
+   * The user excluded this activity from Spending (directly, or through the
+   * other leg of its linked transfer). It adds nothing to spending, income,
+   * saving or refunds, but still moves the account balance;
+   * `cashFlowBucket` keeps the bucket it would count in.
+   */
+  excludedFromSpending?: boolean;
+}
+
+/** An activity excluded from Spending. */
+export interface SpendingExclusion {
+  activityId: string;
+  /**
+   * The activity's current transfer group (`sourceGroupId`). A linked
+   * transfer is excluded as a pair, so treat every activity in this group as
+   * excluded too.
+   */
+  groupId?: string | null;
 }
 
 export interface CurrencyNet {

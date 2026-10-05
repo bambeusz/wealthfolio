@@ -26,8 +26,12 @@ pub enum CashActivityStatusFilter {
     #[default]
     All,
     NeedsReview,
+    /// Rows still waiting for a category. Rows excluded from Spending never
+    /// are: they count nowhere, so they need none.
     Uncategorized,
     Categorized,
+    /// Rows the user excluded from Spending.
+    Excluded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,7 +70,7 @@ pub struct CashActivitySearchRequest {
     pub subcategory_ids: Option<Vec<String>>,
     /// Filter to activities tagged with these events (uses Activity.event_id).
     pub event_ids: Option<Vec<String>>,
-    /// Status: All / NeedsReview / Uncategorized / Categorized.
+    /// Status: All / NeedsReview / Uncategorized / Categorized / Excluded.
     #[serde(default)]
     pub status: CashActivityStatusFilter,
     /// Date window — RFC3339 strings, inclusive.
@@ -164,8 +168,14 @@ pub struct CashActivity {
     /// Computed with the same allocator and `ExclusionIndex` as the
     /// insight/report aggregates, so visuals built client-side from rows
     /// agree with the server headline without re-deriving either rule.
+    /// Zero for a row excluded from Spending.
     #[serde(default)]
     pub visible_spending_amount: f64,
+    /// The user took this row out of every Spending total (directly, or via
+    /// the other leg of its linked transfer). `cash_flow_bucket` still shows
+    /// the bucket it would count in.
+    #[serde(default)]
+    pub excluded_from_spending: bool,
 }
 
 /// A signed net in one currency.

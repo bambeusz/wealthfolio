@@ -1045,5 +1045,14 @@
     "overridesTitle_one": "Eccezione · {{count}}",
     "overridesTitle_many": "Eccezioni · {{count}}",
     "overridesTitle_other": "Eccezioni · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "Escludi dalle Spese",
+    "include": "Includi nelle Spese",
+    "badge": "Esclusa",
+    "badgeHint": "Fuori dai totali delle Spese. Conta ancora nel saldo del conto.",
+    "statusFilter": "Escluse dalle Spese",
+    "excluded": "Esclusa dalle Spese",
+    "included": "Di nuovo inclusa nelle Spese"
   }
 }

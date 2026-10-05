@@ -988,5 +988,14 @@
     "addSource_other": "Quelle hinzufügen ({{count}} verfügbar)",
     "overridesTitle_one": "Anpassung · {{count}}",
     "overridesTitle_other": "Anpassungen · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "Aus Ausgaben ausschließen",
+    "include": "In Ausgaben einbeziehen",
+    "badge": "Ausgeschlossen",
+    "badgeHint": "Nicht in den Ausgaben-Summen. Zählt weiterhin im Kontostand.",
+    "statusFilter": "Aus Ausgaben ausgeschlossen",
+    "excluded": "Aus Ausgaben ausgeschlossen",
+    "included": "Wieder in Ausgaben einbezogen"
   }
 }

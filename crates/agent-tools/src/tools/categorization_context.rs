@@ -482,8 +482,11 @@ pub fn retain_explicit_targets(
         match status {
             CashActivityStatusFilter::All => true,
             CashActivityStatusFilter::NeedsReview => item.activity.needs_review,
-            CashActivityStatusFilter::Uncategorized => !has_category,
+            CashActivityStatusFilter::Uncategorized => {
+                !has_category && !item.excluded_from_spending
+            }
             CashActivityStatusFilter::Categorized => has_category,
+            CashActivityStatusFilter::Excluded => item.excluded_from_spending,
         }
     });
 
@@ -892,6 +895,7 @@ mod tests {
             net_amount: -10.0,
             net_amount_base: None,
             visible_spending_amount: 0.0,
+            excluded_from_spending: false,
         }
     }
 

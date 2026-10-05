@@ -1,7 +1,7 @@
-import { render, screen } from "@/test/render";
+import { fireEvent, render, screen } from "@/test/render";
 import { describe, expect, it, vi } from "vitest";
 
-import type { NetSummary } from "../types/cash-activity";
+import type { CashActivityStatusFilter, NetSummary } from "../types/cash-activity";
 import { TransactionsFilterBar } from "./transactions-filter-bar";
 
 const EMPTY: NetSummary = { byCurrency: [], converted: null };
@@ -15,14 +15,17 @@ function net(
 
 function renderBar(
   nets: { selectedNet?: NetSummary; filteredNet?: NetSummary | null },
-  overrides: { isMobile?: boolean } = {},
+  overrides: {
+    isMobile?: boolean;
+    onStatusFilterChange?: (next: CashActivityStatusFilter) => void;
+  } = {},
 ) {
   return render(
     <TransactionsFilterBar
       searchInput=""
       onSearchInputChange={vi.fn()}
       statusFilter="all"
-      onStatusFilterChange={vi.fn()}
+      onStatusFilterChange={overrides.onStatusFilterChange ?? vi.fn()}
       dateRange={undefined}
       onDateRangeChange={vi.fn()}
       selectedAccounts={new Set()}
@@ -137,5 +140,27 @@ describe("TransactionsFilterBar net readouts", () => {
 
     expect(screen.getByText("Filtered net")).toBeInTheDocument();
     expect(screen.getByText("500.00")).toBeInTheDocument();
+  });
+});
+
+describe("TransactionsFilterBar status filter", () => {
+  it("filters to rows excluded from Spending", async () => {
+    // The status list is a cmdk command menu, which measures itself.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Element.prototype.scrollIntoView ??= () => {};
+    const onStatusFilterChange = vi.fn();
+    renderBar({}, { onStatusFilterChange });
+
+    fireEvent.click(screen.getByRole("button", { name: /Status/ }));
+    fireEvent.click(await screen.findByText("Excluded from Spending"));
+
+    expect(onStatusFilterChange).toHaveBeenCalledWith("excluded");
   });
 });

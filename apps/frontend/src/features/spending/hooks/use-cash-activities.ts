@@ -13,6 +13,7 @@ import {
   replaceActivitySplits,
   searchCashActivities,
   setActivityEvent,
+  setActivitySpendingExclusion,
   unassignActivityCategory,
   type BulkCategoryAssignment,
 } from "../adapters/cash-activities";
@@ -150,6 +151,18 @@ export function useClearActivitySplits() {
       invalidateSpendingCaches(queryClient);
     },
     onError: () => toast.error("Failed to clear split."),
+  });
+}
+
+export function useSetActivitySpendingExclusion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ activityId, excluded }: { activityId: string; excluded: boolean }) =>
+      setActivitySpendingExclusion(activityId, excluded),
+    onSuccess: () => {
+      invalidateSpendingCaches(queryClient);
+    },
+    onError: () => toast.error("Failed to update the Spending exclusion."),
   });
 }
 

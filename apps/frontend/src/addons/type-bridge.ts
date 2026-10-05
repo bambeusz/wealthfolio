@@ -48,6 +48,7 @@ import type {
 import type { HoldingInput } from "@/adapters";
 import type { AlternativeAssetHolding } from "@/lib/types";
 import type {
+  ActivityExclusion,
   CashActivitySearchRequest,
   CashActivitySearchResponse,
 } from "@/features/spending/types/cash-activity";
@@ -126,6 +127,8 @@ export interface InternalHostAPI {
   upsertCategorizationRule(rule: NewCategorizationRule): Promise<InternalCategorizationRule>;
   deleteCategorizationRuleById(id: string): Promise<void>;
   rerunCategorizationRulesForAddon(onlyUncategorized?: boolean): Promise<number>;
+  listSpendingActivityExclusions(): Promise<ActivityExclusion[]>;
+  setActivitySpendingExclusion(activityId: string, excluded: boolean): Promise<void>;
 
   // Contribution limits
   getContributionLimit(): Promise<ContributionLimit[]>;
@@ -617,6 +620,8 @@ export function createSDKHostAPIBridge(
       },
       rerunRules: (onlyUncategorized?: boolean): Promise<number> =>
         internalAPI.rerunCategorizationRulesForAddon(onlyUncategorized ?? true),
+      listExclusions: internalAPI.listSpendingActivityExclusions,
+      setExclusion: internalAPI.setActivitySpendingExclusion,
     },
     "spending",
     guard,

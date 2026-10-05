@@ -47,6 +47,7 @@ import type {
   CategorizationRuleInput,
   SpendCategory,
   SpendCategoryKind,
+  SpendingExclusion,
   SpendingReport,
   SpendingReportRequest,
   SymbolSearchResult,
@@ -542,6 +543,26 @@ export interface SpendingAPI {
    * @returns Promise resolving to the number of activities matched by a rule
    */
   rerunRules(onlyUncategorized?: boolean): Promise<number>;
+
+  /**
+   * List the activities the user excluded from Spending. Each entry carries
+   * the activity's transfer group: a linked transfer is excluded as a pair,
+   * so an activity is excluded when its id or its `sourceGroupId` matches.
+   * @returns Promise resolving to the excluded activities
+   */
+  listExclusions(): Promise<SpendingExclusion[]>;
+
+  /**
+   * Exclude an activity from every Spending total (reports, insights,
+   * budgets, events) or include it again. The activity stays in the ledger
+   * and in the account balance, net worth and performance. For a linked
+   * transfer, either leg excludes the pair. The activity must be on an
+   * account enabled for Spending.
+   * @param activityId The activity to change
+   * @param excluded `true` to exclude, `false` to include again
+   * @returns Promise that resolves once the change is saved
+   */
+  setExclusion(activityId: string, excluded: boolean): Promise<void>;
 }
 
 /**

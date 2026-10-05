@@ -2,6 +2,7 @@ import { invoke, logger } from "#platform";
 import type { Activity } from "@/lib/types";
 
 import type {
+  ActivityExclusion,
   ActivityTaxonomyAssignment,
   ActivitySplit,
   CashActivityFilter,
@@ -117,6 +118,28 @@ export const bulkAssignCategories = async (
     return await invoke<ActivityTaxonomyAssignment[]>("bulk_assign_categories", { items });
   } catch (error) {
     logger.error("Error bulk-assigning categories.");
+    throw error;
+  }
+};
+
+/** Exclude an activity from every Spending total, or include it again. */
+export const setActivitySpendingExclusion = async (
+  activityId: string,
+  excluded: boolean,
+): Promise<void> => {
+  try {
+    await invoke<void>("set_activity_spending_exclusion", { activityId, excluded });
+  } catch (error) {
+    logger.error("Error updating spending exclusion.");
+    throw error;
+  }
+};
+
+export const listSpendingActivityExclusions = async (): Promise<ActivityExclusion[]> => {
+  try {
+    return await invoke<ActivityExclusion[]>("list_spending_activity_exclusions");
+  } catch (error) {
+    logger.error("Error listing spending exclusions.");
     throw error;
   }
 };

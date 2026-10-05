@@ -145,7 +145,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     id: 'spending',
     name: 'Spending',
     description:
-      'View aggregate spending reports and categories, and manage categorization rules that auto-tag transactions',
+      'View aggregate spending reports and categories, manage categorization rules that auto-tag transactions, and exclude transactions from Spending totals',
     functions: [
       'isEnabled',
       'getCategories',
@@ -154,6 +154,8 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       'saveRule',
       'deleteRule',
       'rerunRules',
+      'listExclusions',
+      'setExclusion',
     ],
     riskLevel: 'medium',
   },

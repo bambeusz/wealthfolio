@@ -26,6 +26,7 @@ import {
   isTransferCashActivity,
   type TransactionRowVM,
 } from "../lib/transactions-helpers";
+import { ExcludedBadge } from "./excluded-badge";
 import { QuickCategorizePopover } from "./quick-categorize-popover";
 import { QuickEventPopover } from "./quick-event-popover";
 
@@ -49,6 +50,8 @@ interface TransactionRowProps {
   onDelete: (row: TransactionRowVM) => void;
   onLinkTransfer?: (row: TransactionRowVM) => void;
   onUnlinkTransfer?: (row: TransactionRowVM) => void;
+  /** Flips the row's "Exclude from Spending" switch. */
+  onToggleSpendingExclusion?: (row: TransactionRowVM) => void;
   /**
    * Virtualizer wiring: it measures the rendered row through the ref and
    * identifies it by `data-index`. Both are unset when the list renders
@@ -80,11 +83,13 @@ function TransactionRowImpl({
   onDelete,
   onLinkTransfer,
   onUnlinkTransfer,
+  onToggleSpendingExclusion,
 }: TransactionRowProps) {
   const { formatTime } = useDateFormatting();
 
   const { t } = useTranslation();
   const a = row.activity;
+  const isExcluded = a.excludedFromSpending === true;
   const { isOutflow, isIncome, isSaving, isNeutral, sign, safeAmount } = getTransactionDisplay(
     a,
     account?.accountType,
@@ -142,10 +147,14 @@ function TransactionRowImpl({
             </span>
           )}
           {a.notes != null ? (
-            <TruncatedText text={a.notes} className="text-sm" />
+            <TruncatedText
+              text={a.notes}
+              className={cn("text-sm", isExcluded && "text-muted-foreground")}
+            />
           ) : (
             <span className="text-muted-foreground text-sm italic">—</span>
           )}
+          {isExcluded && <ExcludedBadge />}
           {showAccount && (
             <span className="text-muted-foreground max-w-[8rem] shrink-0 truncate text-xs">
               {accountName}
@@ -244,13 +253,15 @@ function TransactionRowImpl({
       <TableCell
         className={cn(
           "w-28 whitespace-nowrap px-3 py-2 text-right text-sm font-medium tabular-nums",
-          isSaving
-            ? "text-[#6B8E54]"
-            : isOutflow
-              ? "text-destructive"
-              : isNeutral
-                ? "text-muted-foreground"
-                : "text-success",
+          isExcluded
+            ? "text-muted-foreground"
+            : isSaving
+              ? "text-[#6B8E54]"
+              : isOutflow
+                ? "text-destructive"
+                : isNeutral
+                  ? "text-muted-foreground"
+                  : "text-success",
         )}
       >
         {sign}
@@ -304,6 +315,16 @@ function TransactionRowImpl({
                 </DropdownMenuItem>
               ) : null
             ) : null}
+            {onToggleSpendingExclusion && (
+              <DropdownMenuItem onClick={() => onToggleSpendingExclusion(row)}>
+                {isExcluded ? (
+                  <Icons.Eye className="mr-2 h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Icons.EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+                )}
+                {isExcluded ? t("spending:exclusion.include") : t("spending:exclusion.exclude")}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem className="text-destructive" onClick={() => onDelete(row)}>
               <Icons.Trash className="mr-2 h-4 w-4" aria-hidden="true" />
               {t("common:delete")}

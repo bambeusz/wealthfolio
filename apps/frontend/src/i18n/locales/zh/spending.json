@@ -977,5 +977,14 @@
     "migrationNeeded": "当前的本地数据库是在更新后的支出迁移之前创建的。",
     "addSource_other": "添加来源（{{count}} 个可用）",
     "overridesTitle_other": "覆盖设置 · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "从支出中排除",
+    "include": "计入支出",
+    "badge": "已排除",
+    "badgeHint": "不计入支出合计，但仍计入账户余额。",
+    "statusFilter": "已从支出中排除",
+    "excluded": "已从支出中排除",
+    "included": "已重新计入支出"
   }
 }

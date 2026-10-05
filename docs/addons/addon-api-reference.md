@@ -995,6 +995,38 @@ recategorizes existing activities at the moment it's created or updated.
 const matched = await ctx.api.spending.rerunRules();
 ```
 
+#### `listExclusions(): Promise<SpendingExclusion[]>`
+
+Lists the activities the user excluded from Spending. An excluded activity adds
+nothing to any Spending total (spending, income, saving, refunds, budgets,
+insights, events) but stays in the ledger and in the account balance, net worth
+and performance. Each entry carries `groupId`, the activity's current transfer
+link: a linked transfer is excluded as a pair, so treat an activity as excluded
+when its `id` or its `sourceGroupId` matches an entry. Rows from
+`searchCashActivities` already carry this as `excludedFromSpending`.
+
+```typescript
+const exclusions = await ctx.api.spending.listExclusions();
+const ids = new Set(exclusions.map((e) => e.activityId));
+const groups = new Set(
+  exclusions.flatMap((e) => (e.groupId ? [e.groupId] : [])),
+);
+const isExcluded = (a: { id: string; sourceGroupId?: string | null }) =>
+  ids.has(a.id) || (a.sourceGroupId != null && groups.has(a.sourceGroupId));
+```
+
+#### `setExclusion(activityId: string, excluded: boolean): Promise<void>`
+
+Excludes an activity from Spending (`true`) or includes it again (`false`).
+Idempotent. The activity must be on an account enabled for Spending. For a
+linked transfer, excluding either leg excludes the pair.
+
+```typescript
+await ctx.api.spending.setExclusion("activity-123", true);
+```
+
+The exclusion lives on this device only; it is not part of device sync.
+
 ---
 
 ## Contribution Limits API

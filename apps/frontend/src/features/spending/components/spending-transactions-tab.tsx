@@ -82,6 +82,7 @@ import {
   useClearActivitySplits,
   useReplaceActivitySplits,
   useSetActivityEvent,
+  useSetActivitySpendingExclusion,
   useUnassignActivityCategory,
 } from "../hooks/use-cash-activities";
 import { useEventTypes, useSpendingEvents } from "../hooks/use-spending-events";
@@ -436,6 +437,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     const replaceSplitsMutation = useReplaceActivitySplits();
     const clearSplitsMutation = useClearActivitySplits();
     const setEventMutation = useSetActivityEvent();
+    const spendingExclusionMutation = useSetActivitySpendingExclusion();
 
     const allCategories = useMemo(() => {
       const map = new Map<string, TaxonomyCategory>();
@@ -770,6 +772,21 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       },
       [setEventMutation],
     );
+    const handleToggleSpendingExclusion = useCallback(
+      (row: TransactionRowVM) => {
+        const excluded = row.activity.excludedFromSpending !== true;
+        spendingExclusionMutation.mutate(
+          { activityId: row.activity.id, excluded },
+          {
+            onSuccess: () =>
+              toast.success(
+                excluded ? t("spending:exclusion.excluded") : t("spending:exclusion.included"),
+              ),
+          },
+        );
+      },
+      [spendingExclusionMutation, t],
+    );
     const handleSaveSplits = useCallback(
       async (activityId: string, splits: NewActivitySplit[]) => {
         await replaceSplitsMutation.mutateAsync({ activityId, splits });
@@ -1006,6 +1023,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
         onDelete: handleDeleteRow,
         onLinkTransfer: handleLinkTransfer,
         onUnlinkTransfer: handleUnlinkTransfer,
+        onToggleSpendingExclusion: handleToggleSpendingExclusion,
       };
     };
 

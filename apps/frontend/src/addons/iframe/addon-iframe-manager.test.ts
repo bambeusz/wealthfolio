@@ -550,6 +550,12 @@ describe("AddonIframeManager", () => {
       "searchCashActivities",
       { baseCurrency: "CAD", items: [], totalCount: 0 },
     ],
+    [
+      "listExclusions",
+      "spending",
+      "listSpendingActivityExclusions",
+      [{ activityId: "activity-1", groupId: null }],
+    ],
   ] as const)(
     "enforces %s permissions through iframe RPC",
     async (method, category, internalMethod, result) => {

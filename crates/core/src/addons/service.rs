@@ -334,8 +334,10 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
                 "saveRule",
                 "deleteRule",
                 "rerunRules",
+                "listExclusions",
+                "setExclusion",
             ],
-            "Access to spending reports, categories, and categorization rules",
+            "Access to spending reports, categories, categorization rules, and Spending exclusions",
         ),
         (
             "settings",

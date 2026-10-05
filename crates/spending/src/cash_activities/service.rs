@@ -31,9 +31,11 @@ use crate::activity_assignments::{
     ActivityTaxonomyAssignment, ActivityTaxonomyAssignmentService, BulkCategoryAssignment,
 };
 use crate::activity_classification::{
-    activity_abs_amount, classify_activity, classify_activity_for_aggregation, decimal_to_f64,
-    net_amount, within_spending_transfer_groups, SpendingClassification,
+    activity_abs_amount, classify_activity, classify_activity_for_aggregation, classify_for_totals,
+    decimal_to_f64, net_amount, within_spending_transfer_groups, ActivityExclusionIndex,
+    SpendingClassification,
 };
+use crate::activity_exclusions::{ActivityExclusion, ActivityExclusionsRepositoryTrait};
 use crate::activity_splits::{ActivitySplit, ActivitySplitRepositoryTrait, NewActivitySplit};
 use crate::category_exclusions::{excluded_spending_native, ExclusionIndex};
 use crate::error::SpendingError;
@@ -58,6 +60,7 @@ pub struct CashActivityService {
     events: Arc<EventsService>,
     fx: Arc<dyn wealthfolio_core::fx::FxServiceTrait>,
     taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
+    activity_exclusions: Arc<dyn ActivityExclusionsRepositoryTrait>,
 }
 
 /// Accounts in scope for a spending query, with the two lookups callers need.
@@ -89,6 +92,7 @@ impl CashActivityService {
         events: Arc<EventsService>,
         fx: Arc<dyn wealthfolio_core::fx::FxServiceTrait>,
         taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
+        activity_exclusions: Arc<dyn ActivityExclusionsRepositoryTrait>,
     ) -> Self {
         Self {
             activity_repo,
@@ -100,7 +104,14 @@ impl CashActivityService {
             events,
             fx,
             taxonomy_service,
+            activity_exclusions,
         }
+    }
+
+    async fn activity_exclusion_index(&self) -> Result<ActivityExclusionIndex> {
+        Ok(ActivityExclusionIndex::new(
+            self.activity_exclusions.list_all().await?,
+        ))
     }
 
     /// Resolved exclusion set for `visible_spending_amount`. Only touches the
@@ -194,6 +205,7 @@ impl CashActivityService {
         let mut splits_by_activity = group_splits_owned(splits);
         let mut tag_map = self.activity_events.list_for_activities(&ids).await?;
         let exclusions = self.spending_exclusions(&s.excluded_category_ids)?;
+        let activity_exclusions = self.activity_exclusion_index().await?;
         let items: Vec<CashActivity> = activities
             .into_iter()
             .map(|a| {
@@ -204,7 +216,9 @@ impl CashActivityService {
                     &by_activity,
                     &splits_by_activity,
                     &exclusions,
+                    &activity_exclusions,
                 );
+                let excluded_from_spending = activity_exclusions.is_excluded(&a);
                 let assignments = by_activity.remove(&a.id).unwrap_or_default();
                 let splits = splits_by_activity.remove(&a.id).unwrap_or_default();
                 let event_id = tag_map.remove(&a.id);
@@ -221,6 +235,7 @@ impl CashActivityService {
                     net_amount,
                     net_amount_base: None,
                     visible_spending_amount,
+                    excluded_from_spending,
                 }
             })
             .collect();
@@ -476,6 +491,9 @@ impl CashActivityService {
             }
         }
 
+        // Needed by the status filters below and by every row on the page.
+        let activity_exclusions = self.activity_exclusion_index().await?;
+
         // Status / category filters need assignments; fetch in batch first.
         let needs_assignments_for_filter = req.status != CashActivityStatusFilter::All
             || req
@@ -518,12 +536,19 @@ impl CashActivityService {
                         }
                     }
                     CashActivityStatusFilter::Uncategorized => {
-                        if has_category {
+                        // An excluded row counts nowhere, so it never needs a
+                        // category and must not keep the "to categorize" nag alive.
+                        if has_category || activity_exclusions.is_excluded(a) {
                             return false;
                         }
                     }
                     CashActivityStatusFilter::Categorized => {
                         if !has_category {
+                            return false;
+                        }
+                    }
+                    CashActivityStatusFilter::Excluded => {
+                        if !activity_exclusions.is_excluded(a) {
                             return false;
                         }
                     }
@@ -645,7 +670,9 @@ impl CashActivityService {
                     &by_activity,
                     &splits_by_activity,
                     &exclusions,
+                    &activity_exclusions,
                 );
+                let excluded_from_spending = activity_exclusions.is_excluded(&a);
                 let assignments = by_activity.remove(&a.id).unwrap_or_default();
                 let splits = splits_by_activity.remove(&a.id).unwrap_or_default();
                 let event_id = tag_map.remove(&a.id);
@@ -669,6 +696,7 @@ impl CashActivityService {
                     net_amount: decimal_to_f64(net),
                     net_amount_base,
                     visible_spending_amount,
+                    excluded_from_spending,
                 }
             })
             .collect();
@@ -724,6 +752,7 @@ impl CashActivityService {
         let mut splits_by_activity = group_splits_owned(splits);
         let mut tag_map = self.activity_events.list_for_activities(&ids).await?;
         let exclusions = self.spending_exclusions(&s.excluded_category_ids)?;
+        let activity_exclusions = self.activity_exclusion_index().await?;
         Ok(activities
             .into_iter()
             .map(|activity| {
@@ -734,7 +763,9 @@ impl CashActivityService {
                     &by_activity,
                     &splits_by_activity,
                     &exclusions,
+                    &activity_exclusions,
                 );
+                let excluded_from_spending = activity_exclusions.is_excluded(&activity);
                 let assignments = by_activity.remove(&activity.id).unwrap_or_default();
                 let splits = splits_by_activity.remove(&activity.id).unwrap_or_default();
                 let event_id = tag_map.remove(&activity.id);
@@ -753,6 +784,7 @@ impl CashActivityService {
                     net_amount,
                     net_amount_base: None,
                     visible_spending_amount,
+                    excluded_from_spending,
                 }
             })
             .collect())
@@ -896,6 +928,22 @@ impl CashActivityService {
             .set_activity_event_tag(activity_id, event_id)
             .await?;
         Ok(activity)
+    }
+
+    /// Exclude an activity from every Spending total, or include it again.
+    /// The row stays in the ledger and in the account balance; for a linked
+    /// transfer the switch covers both legs (see `ActivityExclusionIndex`).
+    pub async fn set_excluded(&self, activity_id: &str, excluded: bool) -> Result<()> {
+        self.ensure_activity_in_spending_scope(activity_id).await?;
+        self.activity_exclusions
+            .set_excluded(activity_id, excluded)
+            .await
+    }
+
+    /// Every activity excluded from Spending, with its transfer group so
+    /// callers can apply the pair rule themselves.
+    pub async fn list_exclusions(&self) -> Result<Vec<ActivityExclusion>> {
+        self.activity_exclusions.list_all().await
     }
 
     fn resolve_target_accounts(
@@ -1126,8 +1174,9 @@ fn cash_flow_bucket_for(
 }
 
 /// `CashActivity::visible_spending_amount`: the spending bucket less the
-/// excluded-category portion, using the same classification as
-/// `cash_flow_bucket_for` and the same allocator as the report aggregates.
+/// excluded-category portion, using the totals classification (so an activity
+/// excluded from Spending is zero) and the same allocator as the report
+/// aggregates.
 fn visible_spending_amount(
     activity: &Activity,
     account_types: &HashMap<String, String>,
@@ -1135,11 +1184,12 @@ fn visible_spending_amount(
     assignments_by_activity: &AssignmentsByActivity,
     splits_by_activity: &SplitsByActivity,
     exclusions: &ExclusionIndex,
+    activity_exclusions: &ActivityExclusionIndex,
 ) -> f64 {
     let Some(account_type) = account_types.get(&activity.account_id) else {
         return 0.0;
     };
-    let bucket = classify_activity_for_aggregation(activity, account_type, transfer_groups)
+    let bucket = classify_for_totals(activity, account_type, transfer_groups, activity_exclusions)
         .spending_amount(activity_abs_amount(activity));
     let excluded = excluded_spending_native(
         &activity.id,
@@ -2342,8 +2392,375 @@ mod tests {
             events,
             fx,
             Arc::new(MockTaxonomyService { categories }),
+            Arc::new(MockActivityExclusionsRepo::default()),
         );
         (service, assignment_repo, split_repo)
+    }
+
+    #[derive(Default)]
+    struct MockActivityExclusionsRepo {
+        rows: Mutex<Vec<ActivityExclusion>>,
+    }
+
+    #[async_trait]
+    impl ActivityExclusionsRepositoryTrait for MockActivityExclusionsRepo {
+        async fn list_all(&self) -> Result<Vec<ActivityExclusion>> {
+            Ok(self.rows.lock().unwrap().clone())
+        }
+
+        async fn set_excluded(&self, activity_id: &str, excluded: bool) -> Result<()> {
+            let mut rows = self.rows.lock().unwrap();
+            rows.retain(|row| row.activity_id != activity_id);
+            if excluded {
+                rows.push(ActivityExclusion {
+                    activity_id: activity_id.to_string(),
+                    group_id: None,
+                });
+            }
+            Ok(())
+        }
+    }
+
+    /// Budget repository with only the "Other" group, enough for snapshot
+    /// and insight reads.
+    struct StubBudgetRepo;
+
+    #[async_trait]
+    impl crate::budget::BudgetRepositoryTrait for StubBudgetRepo {
+        async fn list_groups(&self) -> Result<Vec<crate::budget::BudgetGroup>> {
+            Ok(vec![crate::budget::BudgetGroup {
+                id: "group-other".to_string(),
+                name: "Other".to_string(),
+                key: "other".to_string(),
+                color: None,
+                icon: None,
+                sort_order: 99,
+                is_system: true,
+                created_at: now_naive(),
+                updated_at: now_naive(),
+            }])
+        }
+        async fn create_group(
+            &self,
+            _: crate::budget::NewBudgetGroup,
+        ) -> Result<crate::budget::BudgetGroup> {
+            unimplemented!()
+        }
+        async fn update_group(
+            &self,
+            _: &str,
+            _: crate::budget::UpdateBudgetGroup,
+        ) -> Result<crate::budget::BudgetGroup> {
+            unimplemented!()
+        }
+        async fn delete_group(&self, _: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn delete_group_and_reassign(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<crate::budget::NewBudgetGroupAssignment>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+        async fn upsert_system_groups(
+            &self,
+            _: Vec<crate::budget::NewBudgetGroup>,
+        ) -> Result<Vec<crate::budget::BudgetGroup>> {
+            Ok(Vec::new())
+        }
+        async fn list_group_assignments(
+            &self,
+        ) -> Result<Vec<crate::budget::BudgetGroupAssignment>> {
+            Ok(Vec::new())
+        }
+        async fn upsert_group_assignment(
+            &self,
+            _: crate::budget::NewBudgetGroupAssignment,
+        ) -> Result<crate::budget::BudgetGroupAssignment> {
+            unimplemented!()
+        }
+        async fn upsert_group_assignments(
+            &self,
+            _: Vec<crate::budget::NewBudgetGroupAssignment>,
+        ) -> Result<Vec<crate::budget::BudgetGroupAssignment>> {
+            unimplemented!()
+        }
+        async fn upsert_system_group_assignments(
+            &self,
+            _: Vec<crate::budget::NewBudgetGroupAssignment>,
+        ) -> Result<Vec<crate::budget::BudgetGroupAssignment>> {
+            unimplemented!()
+        }
+        async fn list_targets(&self) -> Result<Vec<crate::budget::BudgetTarget>> {
+            Ok(Vec::new())
+        }
+        async fn upsert_target(
+            &self,
+            _: crate::budget::NewBudgetTarget,
+        ) -> Result<crate::budget::BudgetTarget> {
+            unimplemented!()
+        }
+        async fn delete_target(&self, _: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn list_rollover_settings(
+            &self,
+        ) -> Result<Vec<crate::budget::BudgetRolloverSetting>> {
+            Ok(Vec::new())
+        }
+        async fn upsert_rollover_setting(
+            &self,
+            _: crate::budget::NewBudgetRolloverSetting,
+        ) -> Result<crate::budget::BudgetRolloverSetting> {
+            unimplemented!()
+        }
+        async fn delete_rollover_setting(&self, _: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn disable_category_rollovers(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<Vec<crate::budget::BudgetRolloverSetting>> {
+            unimplemented!()
+        }
+        async fn copy_period_targets(
+            &self,
+            _: &str,
+            _: &str,
+            _: bool,
+        ) -> Result<Vec<crate::budget::BudgetTarget>> {
+            unimplemented!()
+        }
+    }
+
+    fn exclusion(activity_id: &str, group_id: Option<&str>) -> ActivityExclusion {
+        ActivityExclusion {
+            activity_id: activity_id.to_string(),
+            group_id: group_id.map(str::to_string),
+        }
+    }
+
+    /// One kept charge, one charge excluded by id, and a savings sweep (a
+    /// linked transfer to a non-spending account) excluded through the other
+    /// leg's group. Every totals surface must count only the kept 100; a
+    /// surface that classified with the raw classifier would see 140 spent or
+    /// 500 saved.
+    fn exclusion_fixture() -> (CashActivityService, Arc<MockAssignmentRepo>) {
+        let mut sweep = cash_row("sweep", "TRANSFER_OUT", 500, "USD");
+        sweep.source_group_id = Some("pair-savings".to_string());
+        let rows = vec![
+            cash_row("groceries", "WITHDRAWAL", 100, "USD"),
+            cash_row("mistake", "WITHDRAWAL", 40, "USD"),
+            sweep,
+        ];
+        let (mut service, assignment_repo, _) = make_service_full(
+            rows,
+            MockFx::none(),
+            Vec::new(),
+            vec![spending_category("cat_groceries", None)],
+        );
+        *assignment_repo.assignments.lock().unwrap() = vec![
+            spending_assignment("groceries", "cat_groceries"),
+            spending_assignment("mistake", "cat_groceries"),
+        ];
+        service.activity_exclusions = Arc::new(MockActivityExclusionsRepo {
+            rows: Mutex::new(vec![
+                exclusion("mistake", None),
+                exclusion("savings-account-leg", Some("pair-savings")),
+            ]),
+        });
+        (service, assignment_repo)
+    }
+
+    #[tokio::test]
+    async fn excluded_rows_stay_in_the_ledger_with_their_real_bucket() {
+        let (service, _) = exclusion_fixture();
+
+        let items = service.list(CashActivityFilter::default()).await.unwrap();
+        let row = |id: &str| items.iter().find(|i| i.activity.id == id).unwrap();
+        assert_eq!(items.len(), 3);
+        assert!(!row("groceries").excluded_from_spending);
+        assert_eq!(row("groceries").visible_spending_amount, 100.0);
+        assert!(row("mistake").excluded_from_spending);
+        assert_eq!(row("mistake").cash_flow_bucket, CashFlowBucket::Spending);
+        assert_eq!(row("mistake").visible_spending_amount, 0.0);
+        assert!(row("sweep").excluded_from_spending);
+        assert_eq!(row("sweep").cash_flow_bucket, CashFlowBucket::Saving);
+        // The balance still moves.
+        assert_eq!(row("sweep").net_amount, -500.0);
+    }
+
+    #[tokio::test]
+    async fn excluded_filter_and_uncategorized_nag() {
+        let (service, _) = exclusion_fixture();
+        let ids_for = |status| {
+            let service = &service;
+            async move {
+                let mut ids: Vec<String> = service
+                    .search(
+                        CashActivitySearchRequest {
+                            status,
+                            limit: 50,
+                            ..Default::default()
+                        },
+                        None,
+                        "UTC",
+                    )
+                    .await
+                    .unwrap()
+                    .items
+                    .into_iter()
+                    .map(|i| i.activity.id)
+                    .collect();
+                ids.sort();
+                ids
+            }
+        };
+
+        assert_eq!(
+            ids_for(CashActivityStatusFilter::Excluded).await,
+            vec!["mistake".to_string(), "sweep".to_string()]
+        );
+        // The uncategorized sweep is excluded, so nothing is left to categorize.
+        assert!(ids_for(CashActivityStatusFilter::Uncategorized)
+            .await
+            .is_empty());
+    }
+
+    /// The dashboard's "N to tag" link is the `totalCount` of this search: an
+    /// excluded uncategorized charge must not be the one it counts.
+    #[tokio::test]
+    async fn to_tag_count_skips_an_excluded_uncategorized_charge() {
+        let (mut service, _, _) = make_service_with(vec![
+            cash_row("card-sweep", "WITHDRAWAL", 300, "USD"),
+            cash_row("bakery", "WITHDRAWAL", 12, "USD"),
+        ]);
+        service.activity_exclusions = Arc::new(MockActivityExclusionsRepo {
+            rows: Mutex::new(vec![exclusion("card-sweep", None)]),
+        });
+
+        let page = service
+            .search(
+                CashActivitySearchRequest {
+                    status: CashActivityStatusFilter::Uncategorized,
+                    limit: 1,
+                    ..Default::default()
+                },
+                None,
+                "UTC",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].activity.id, "bakery");
+    }
+
+    #[tokio::test]
+    async fn set_excluded_round_trips_through_the_repository() {
+        let (service, _, _) = make_service_with(vec![cash_row("a", "WITHDRAWAL", 10, "USD")]);
+
+        service.set_excluded("a", true).await.unwrap();
+        assert_eq!(
+            service.list_exclusions().await.unwrap(),
+            vec![exclusion("a", None)]
+        );
+        let items = service.list(CashActivityFilter::default()).await.unwrap();
+        assert!(items[0].excluded_from_spending);
+
+        service.set_excluded("a", false).await.unwrap();
+        assert!(service.list_exclusions().await.unwrap().is_empty());
+        assert!(service.set_excluded("unknown", true).await.is_err());
+    }
+
+    /// Guards every totals call site at once: insight headline + pace, the
+    /// budget actuals and the monthly report all see only the kept charge.
+    #[tokio::test]
+    async fn totals_ignore_activities_excluded_from_spending() {
+        let (cash, assignments) = exclusion_fixture();
+        let today = Utc::now();
+        let day_start = today.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let day_end = today
+            .date_naive()
+            .and_hms_opt(23, 59, 59)
+            .unwrap()
+            .and_utc();
+
+        let insight = crate::insight::InsightService::new(
+            Arc::new(StubBudgetRepo),
+            cash.activity_repo.clone(),
+            cash.account_repo.clone(),
+            assignments.clone(),
+            cash.splits.clone(),
+            cash.settings.clone(),
+            cash.taxonomy_service.clone(),
+            cash.fx.clone(),
+            cash.activity_exclusions.clone(),
+        )
+        .compute(
+            crate::insight::SpendingInsightRequest {
+                start_date: day_start.to_rfc3339(),
+                end_date: day_end.to_rfc3339(),
+                compare_start_date: None,
+                compare_end_date: None,
+                account_ids: None,
+                compare: None,
+            },
+            "USD",
+            "UTC",
+        )
+        .await
+        .unwrap();
+        assert_eq!(insight.headline.spent, 100.0);
+        assert_eq!(insight.headline.saved, 0.0);
+        // Window = today only, so the trailing average is today's spend.
+        assert_eq!(insight.headline.pace.daily_avg, 100.0);
+
+        let snapshot = crate::budget::BudgetService::new(
+            Arc::new(StubBudgetRepo),
+            cash.activity_repo.clone(),
+            cash.account_repo.clone(),
+            assignments.clone(),
+            cash.splits.clone(),
+            cash.settings.clone(),
+            cash.taxonomy_service.clone(),
+            cash.fx.clone(),
+            cash.activity_exclusions.clone(),
+        )
+        .get(Some(today.format("%Y-%m").to_string()), "USD", "UTC")
+        .await
+        .unwrap();
+        assert_eq!(snapshot.computed.totals.spending_actual, 100.0);
+
+        let report = crate::analytics::AnalyticsService::new(
+            cash.activity_repo.clone(),
+            cash.account_repo.clone(),
+            assignments,
+            cash.splits.clone(),
+            cash.settings.clone(),
+            cash.taxonomy_service.clone(),
+            cash.events.clone(),
+            cash.fx.clone(),
+            cash.activity_events.clone(),
+            cash.activity_exclusions.clone(),
+        )
+        .monthly_report(
+            crate::analytics::ReportRequest {
+                start_date: day_start.to_rfc3339(),
+                end_date: day_end.to_rfc3339(),
+                account_ids: None,
+            },
+            "UTC",
+            "USD",
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.current.outflow, 100.0);
+        assert_eq!(report.current.saved, 0.0);
+        assert!(report.savings_breakdown.is_empty());
     }
 
     fn spending_category(id: &str, parent_id: Option<&str>) -> Category {
@@ -2750,6 +3167,7 @@ mod tests {
             cash.events.clone(),
             cash.fx.clone(),
             cash.activity_events.clone(),
+            cash.activity_exclusions.clone(),
         );
         for (account_ids, expected_outflow) in [(None, 120.0), (Some(vec![]), 0.0)] {
             let report = analytics

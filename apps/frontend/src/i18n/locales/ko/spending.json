@@ -977,5 +977,14 @@
     "migrationNeeded": "현재 로컬 데이터베이스는 업데이트된 지출 마이그레이션 이전에 생성되었습니다.",
     "addSource_other": "수입원 추가 (사용 가능 {{count}}개)",
     "overridesTitle_other": "재정의 · {{count}}개"
+  },
+  "exclusion": {
+    "exclude": "지출에서 제외",
+    "include": "지출에 포함",
+    "badge": "제외됨",
+    "badgeHint": "지출 합계에서 제외됩니다. 계좌 잔액에는 계속 반영됩니다.",
+    "statusFilter": "지출에서 제외됨",
+    "excluded": "지출에서 제외했습니다",
+    "included": "지출에 다시 포함했습니다"
   }
 }

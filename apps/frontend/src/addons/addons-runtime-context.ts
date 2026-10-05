@@ -43,7 +43,11 @@ import {
   rerunCategorizationRules,
   upsertCategorizationRule,
 } from "@/adapters";
-import { searchCashActivities } from "@/features/spending/adapters/cash-activities";
+import {
+  listSpendingActivityExclusions,
+  searchCashActivities,
+  setActivitySpendingExclusion,
+} from "@/features/spending/adapters/cash-activities";
 import { getSpendingReport } from "@/features/spending/adapters/reports";
 import { openCsvFileDialog, openFileSaveDialog } from "@/adapters";
 import { createGoal, getGoals, getGoalFunding, saveGoalFunding, updateGoal } from "@/adapters";
@@ -481,6 +485,8 @@ export function createAddonHostAPI(
       upsertCategorizationRule,
       deleteCategorizationRuleById: deleteCategorizationRule,
       rerunCategorizationRulesForAddon: rerunCategorizationRules,
+      listSpendingActivityExclusions,
+      setActivitySpendingExclusion,
 
       getContributionLimit,
       createContributionLimit,

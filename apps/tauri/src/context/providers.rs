@@ -334,6 +334,16 @@ async fn build_context(
         activity_events_repo.clone(),
     ));
 
+    // Spending: per-activity "Exclude from Spending" switch, read by every totals service.
+    let activity_exclusions_repo: Arc<
+        dyn wealthfolio_spending::activity_exclusions::ActivityExclusionsRepositoryTrait,
+    > = Arc::new(
+        wealthfolio_storage_sqlite::spending::activity_exclusions::ActivityExclusionsRepository::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
+
     // Spending: cash_activity_service depends on the activity_repository + spending settings
     //          + the assignments service (so search() can batch-fetch assignments and apply
     //          status/category filters server-side).
@@ -348,6 +358,7 @@ async fn build_context(
             events_service.clone(),
             fx_service.clone(),
             taxonomy_service.clone(),
+            activity_exclusions_repo.clone(),
         ),
     );
 
@@ -384,6 +395,7 @@ async fn build_context(
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),
+        activity_exclusions_repo.clone(),
     ));
 
     // Spending: analytics — needs activity repo + assignment repo (re-built since the
@@ -407,6 +419,7 @@ async fn build_context(
             events_service.clone(),
             fx_service.clone(),
             activity_events_repo.clone(),
+            activity_exclusions_repo.clone(),
         ));
 
     // Spending: reconciled period insight (powers the Spending Insight dashboard).
@@ -426,6 +439,7 @@ async fn build_context(
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),
+        activity_exclusions_repo,
     ));
 
     // Import run repository for tracking CSV imports

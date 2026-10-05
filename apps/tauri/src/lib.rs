@@ -342,6 +342,8 @@ pub fn run() {
             commands::spending::list_cash_activities,
             commands::spending::search_cash_activities,
             commands::spending::set_activity_event,
+            commands::spending::set_activity_spending_exclusion,
+            commands::spending::list_spending_activity_exclusions,
             commands::spending::get_activity_assignments,
             commands::spending::assign_activity_category,
             commands::spending::unassign_activity_category,

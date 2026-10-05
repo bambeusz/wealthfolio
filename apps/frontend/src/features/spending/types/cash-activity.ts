@@ -41,7 +41,22 @@ export interface NewActivitySplit {
 export type CashFlowBucket = "spending" | "income" | "saving" | "neutral";
 export type TransferLinkStatus = "linked" | "unlinked" | "invalid";
 
-export type CashActivityStatusFilter = "all" | "needs_review" | "uncategorized" | "categorized";
+export type CashActivityStatusFilter =
+  | "all"
+  | "needs_review"
+  | "uncategorized"
+  | "categorized"
+  | "excluded";
+
+/**
+ * An activity the user excluded from Spending. Mirrors
+ * `wealthfolio_spending::activity_exclusions::ActivityExclusion`; `groupId` is
+ * the activity's current transfer link, which excludes the other leg too.
+ */
+export interface ActivityExclusion {
+  activityId: string;
+  groupId?: string | null;
+}
 
 export type CashActivitySortField = "date" | "amount";
 export type CashActivitySortDirection = "asc" | "desc";
@@ -100,6 +115,12 @@ export interface CashActivity extends Activity {
    * Absent only from rows produced by a backend that predates exclusions.
    */
   visibleSpendingAmount?: number;
+  /**
+   * The user took this row out of every Spending total (directly or through
+   * the other leg of its linked transfer). It still moves the account
+   * balance, and `cashFlowBucket` still names the bucket it would count in.
+   */
+  excludedFromSpending?: boolean;
 }
 
 /** A signed net in one currency. */

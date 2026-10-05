@@ -21,9 +21,10 @@ use crate::activity_allocations::{
 };
 use crate::activity_assignments::ActivityTaxonomyAssignmentRepositoryTrait;
 use crate::activity_classification::{
-    activity_abs_amount, classify_activity, classify_activity_for_aggregation, decimal_to_f64,
-    within_spending_transfer_groups, SpendingClassification,
+    activity_abs_amount, classify_for_totals, classify_plain_for_totals, decimal_to_f64,
+    within_spending_transfer_groups, ActivityExclusionIndex, SpendingClassification,
 };
+use crate::activity_exclusions::ActivityExclusionsRepositoryTrait;
 use crate::activity_splits::ActivitySplitRepositoryTrait;
 use crate::budget::service::category_meta;
 use crate::category_exclusions::{
@@ -62,6 +63,7 @@ pub struct AnalyticsService {
     events_service: Arc<EventsService>,
     fx_service: Arc<dyn wealthfolio_core::fx::FxServiceTrait>,
     activity_events: Arc<dyn crate::activity_events::ActivityEventsRepositoryTrait>,
+    activity_exclusions: Arc<dyn ActivityExclusionsRepositoryTrait>,
 }
 
 impl AnalyticsService {
@@ -76,6 +78,7 @@ impl AnalyticsService {
         events_service: Arc<EventsService>,
         fx_service: Arc<dyn wealthfolio_core::fx::FxServiceTrait>,
         activity_events: Arc<dyn crate::activity_events::ActivityEventsRepositoryTrait>,
+        activity_exclusions: Arc<dyn ActivityExclusionsRepositoryTrait>,
     ) -> Self {
         Self {
             activity_repo,
@@ -87,7 +90,14 @@ impl AnalyticsService {
             events_service,
             fx_service,
             activity_events,
+            activity_exclusions,
         }
+    }
+
+    async fn activity_exclusion_index(&self) -> Result<ActivityExclusionIndex> {
+        Ok(ActivityExclusionIndex::new(
+            self.activity_exclusions.list_all().await?,
+        ))
     }
 
     fn resolve_spending_account_types(
@@ -205,6 +215,7 @@ impl AnalyticsService {
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let transfer_context_acts: Vec<&Activity> = activities.iter().collect();
         let transfer_groups = within_spending_transfer_groups(&transfer_context_acts);
+        let activity_exclusions = self.activity_exclusion_index().await?;
 
         let in_window = |a: &Activity, lo: DateTime<Utc>, hi: DateTime<Utc>| {
             a.activity_date >= lo && a.activity_date <= hi
@@ -256,6 +267,7 @@ impl AnalyticsService {
             &assignments_by_activity,
             &splits_by_activity,
             &exclusions,
+            &activity_exclusions,
             fx,
             base_currency,
             fx_as_of_current,
@@ -267,6 +279,7 @@ impl AnalyticsService {
             &assignments_by_activity,
             &splits_by_activity,
             &exclusions,
+            &activity_exclusions,
             fx,
             base_currency,
             fx_as_of_prior,
@@ -277,7 +290,8 @@ impl AnalyticsService {
         // headline outflow within rounding tolerance.
         let mut by_day_map: HashMap<NaiveDate, (Decimal, Decimal)> = HashMap::new();
         for a in &current_acts {
-            let Some(classification) = classification_for(a, &account_types) else {
+            let Some(classification) = classification_for(a, &account_types, &activity_exclusions)
+            else {
                 continue;
             };
             let amt = activity_abs_amount(a);
@@ -350,7 +364,7 @@ impl AnalyticsService {
                 continue;
             };
             let classification =
-                classify_activity_for_aggregation(a, account_type, &transfer_groups);
+                classify_for_totals(a, account_type, &transfer_groups, &activity_exclusions);
             let amt = activity_abs_amount(a);
             let income_native = classification.income_amount(amt);
             let spending_native = classification.spending_amount(amt);
@@ -504,6 +518,7 @@ fn summarize(
     assignments_by_activity: &AssignmentsByActivity,
     splits_by_activity: &SplitsByActivity,
     exclusions: &ExclusionIndex,
+    activity_exclusions: &ActivityExclusionIndex,
     fx: &dyn wealthfolio_core::fx::FxServiceTrait,
     target_currency: &str,
     fx_as_of: NaiveDate,
@@ -518,7 +533,8 @@ fn summarize(
         };
         // Income-pattern buckets: classification decides spend/income/saving;
         // a cross-boundary transfer-out → Saving. Amounts never overlap.
-        let classification = classify_activity_for_aggregation(a, account_type, within_groups);
+        let classification =
+            classify_for_totals(a, account_type, within_groups, activity_exclusions);
         let amt = activity_abs_amount(a);
         let income_native = classification.income_amount(amt);
         let spending_native = classification.spending_amount(amt);
@@ -672,10 +688,11 @@ fn add_report_breakdown_allocations(
 fn classification_for(
     activity: &Activity,
     account_types: &HashMap<String, String>,
+    activity_exclusions: &ActivityExclusionIndex,
 ) -> Option<SpendingClassification> {
     account_types
         .get(&activity.account_id)
-        .map(|account_type| classify_activity(activity, account_type))
+        .map(|account_type| classify_plain_for_totals(activity, account_type, activity_exclusions))
 }
 
 // ====================== SpendingSummary (PR-style multi-period rollup) ======================
@@ -735,6 +752,7 @@ impl AnalyticsService {
             .activity_repo
             .get_activities_by_account_ids(&target_accounts)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let activity_exclusions = self.activity_exclusion_index().await?;
 
         // Pre-load assignments per activity in scope (only for outflow + spending taxonomy).
         // Single batched lookup, then group by activity_id — avoids the N+1
@@ -742,7 +760,7 @@ impl AnalyticsService {
         let spending_ids: Vec<String> = activities
             .iter()
             .filter(|a| {
-                classification_for(a, &account_types)
+                classification_for(a, &account_types, &activity_exclusions)
                     .map(|c| c.spending_amount(activity_abs_amount(a)) != Decimal::ZERO)
                     .unwrap_or(false)
             })
@@ -815,7 +833,9 @@ impl AnalyticsService {
             let in_window: Vec<&Activity> = activities
                 .iter()
                 .filter(|a| {
-                    let Some(classification) = classification_for(a, &account_types) else {
+                    let Some(classification) =
+                        classification_for(a, &account_types, &activity_exclusions)
+                    else {
                         return false;
                     };
                     if classification.spending_amount(activity_abs_amount(a)) == Decimal::ZERO {
@@ -857,6 +877,7 @@ impl AnalyticsService {
                 &splits_by_activity,
                 &cat_meta,
                 &account_types,
+                &activity_exclusions,
                 &currency,
                 self.fx_service.as_ref(),
                 fx_as_of,
@@ -895,6 +916,7 @@ fn group_activities_by_visible_event(
     tag_map: HashMap<String, String>,
     visible_event_ids: &HashSet<String>,
     account_types: &HashMap<String, String>,
+    activity_exclusions: &ActivityExclusionIndex,
 ) -> HashMap<String, Vec<Activity>> {
     let mut by_event: HashMap<String, Vec<Activity>> = HashMap::new();
     for activity in activities {
@@ -904,7 +926,9 @@ fn group_activities_by_visible_event(
         if !visible_event_ids.contains(&event_id) {
             continue;
         }
-        let Some(classification) = classification_for(&activity, account_types) else {
+        let Some(classification) =
+            classification_for(&activity, account_types, activity_exclusions)
+        else {
             continue;
         };
         if classification.spending_amount(activity_abs_amount(&activity)) == Decimal::ZERO {
@@ -970,6 +994,7 @@ fn build_summary(
     splits_by_activity: &SplitsByActivity,
     cat_meta: &HashMap<String, (String, Option<String>, Option<String>)>,
     account_types: &HashMap<String, String>,
+    activity_exclusions: &ActivityExclusionIndex,
     currency: &str,
     fx: &dyn wealthfolio_core::fx::FxServiceTrait,
     fx_as_of: NaiveDate,
@@ -983,7 +1008,7 @@ fn build_summary(
     let mut by_month_by_subcategory: HashMap<String, HashMap<String, Decimal>> = HashMap::new();
     let mut transaction_count = 0;
     for a in activities {
-        let Some(classification) = classification_for(a, account_types) else {
+        let Some(classification) = classification_for(a, account_types, activity_exclusions) else {
             continue;
         };
         let amt_native = classification.spending_amount(activity_abs_amount(a));
@@ -1395,11 +1420,13 @@ impl AnalyticsService {
             .into_iter()
             .filter(|activity| target_account_ids.contains(activity.account_id.as_str()))
             .collect();
+        let activity_exclusions = self.activity_exclusion_index().await?;
         let mut by_event = group_activities_by_visible_event(
             activities,
             tag_map,
             &visible_event_id_set,
             &account_types,
+            &activity_exclusions,
         );
 
         let currency = req.currency.unwrap_or_else(|| "USD".to_string());
@@ -1436,7 +1463,9 @@ impl AnalyticsService {
             let mut transaction_count = 0;
 
             for a in &acts {
-                let Some(classification) = classification_for(a, &account_types) else {
+                let Some(classification) =
+                    classification_for(a, &account_types, &activity_exclusions)
+                else {
                     continue;
                 };
                 let amt_native = classification.spending_amount(activity_abs_amount(a));
@@ -1963,6 +1992,7 @@ mod tests {
             &assignments,
             &splits,
             &exclusions,
+            &ActivityExclusionIndex::empty(),
             &PassthroughFx,
             "USD",
             NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(),
@@ -1972,6 +2002,33 @@ mod tests {
         assert_eq!(summary.income, 900.0);
         // The fully-excluded charge contributes nothing and is not counted.
         assert_eq!(summary.count, 2);
+
+        // Excluding the kept charge and the income from Spending empties
+        // both figures; the excluded rows are not counted either.
+        let excluded = ActivityExclusionIndex::new(
+            ["kept", "income"]
+                .into_iter()
+                .map(|id| crate::activity_exclusions::ActivityExclusion {
+                    activity_id: id.to_string(),
+                    group_id: None,
+                })
+                .collect(),
+        );
+        let summary = summarize(
+            &acts,
+            &account_types,
+            &within_spending_transfer_groups(&acts),
+            &assignments,
+            &splits,
+            &exclusions,
+            &excluded,
+            &PassthroughFx,
+            "USD",
+            NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(),
+        );
+        assert_eq!(summary.outflow, 0.0);
+        assert_eq!(summary.income, 0.0);
+        assert_eq!(summary.count, 0);
     }
 
     fn build_credit_card_summary(activities: &[Activity]) -> SpendingSummary {
@@ -2019,6 +2076,7 @@ mod tests {
             &splits_by_act,
             &cat_meta,
             &account_types,
+            &ActivityExclusionIndex::empty(),
             "USD",
             &PassthroughFx,
             NaiveDate::from_ymd_opt(2024, 12, 31).unwrap(),
@@ -2106,6 +2164,7 @@ mod tests {
                 "card-account".to_string(),
                 account_types::CREDIT_CARD.to_string(),
             )]),
+            &ActivityExclusionIndex::empty(),
         );
 
         let mut ids = grouped
@@ -2134,6 +2193,7 @@ mod tests {
                 "card-account".to_string(),
                 account_types::CREDIT_CARD.to_string(),
             )]),
+            &ActivityExclusionIndex::empty(),
         );
 
         let ids = grouped
@@ -2144,6 +2204,54 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["visible"]);
         assert!(!grouped.contains_key("hidden-event"));
+    }
+
+    #[test]
+    fn event_and_summary_totals_skip_activities_excluded_from_spending() {
+        let (flight, flight_assignment) =
+            spending_activity("flight", "WITHDRAWAL", 300, "travel", 5);
+        let (meal, meal_assignment) = spending_activity("meal", "WITHDRAWAL", 80, "travel", 6);
+        let account_types = HashMap::from([(
+            "card-account".to_string(),
+            account_types::CREDIT_CARD.to_string(),
+        )]);
+        let excluded =
+            ActivityExclusionIndex::new(vec![crate::activity_exclusions::ActivityExclusion {
+                activity_id: "flight".to_string(),
+                group_id: None,
+            }]);
+
+        let grouped = group_activities_by_visible_event(
+            vec![flight.clone(), meal.clone()],
+            HashMap::from([
+                ("flight".to_string(), "holiday".to_string()),
+                ("meal".to_string(), "holiday".to_string()),
+            ]),
+            &HashSet::from(["holiday".to_string()]),
+            &account_types,
+            &excluded,
+        );
+        let ids = grouped["holiday"]
+            .iter()
+            .map(|activity| activity.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["meal"]);
+
+        let summary = build_summary(
+            "TOTAL",
+            &[&flight, &meal],
+            &group_assignments(vec![flight_assignment, meal_assignment]),
+            &SplitsByActivity::new(),
+            &HashMap::new(),
+            &account_types,
+            &excluded,
+            "USD",
+            &PassthroughFx,
+            NaiveDate::from_ymd_opt(2024, 12, 31).unwrap(),
+            "",
+        );
+        assert_eq!(summary.total_spending, 80.0);
+        assert_eq!(summary.transaction_count, 1);
     }
 
     #[test]
@@ -2170,6 +2278,7 @@ mod tests {
             &splits,
             &cat_meta,
             &account_types,
+            &ActivityExclusionIndex::empty(),
             "USD",
             &DoubleEurFx,
             NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(),
@@ -2204,6 +2313,7 @@ mod tests {
             &splits,
             &cat_meta,
             &account_types,
+            &ActivityExclusionIndex::empty(),
             "USD",
             &FailingFx,
             NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(),
@@ -2247,6 +2357,7 @@ mod tests {
             &splits,
             &cat_meta,
             &account_types,
+            &ActivityExclusionIndex::empty(),
             "USD",
             &PassthroughFx,
             NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(),

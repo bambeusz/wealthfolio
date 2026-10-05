@@ -1045,5 +1045,14 @@
     "overridesTitle_one": "Exceção · {{count}}",
     "overridesTitle_other": "Exceções · {{count}}",
     "overridesTitle_many": "Exceções · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "Excluir de Gastos",
+    "include": "Incluir em Gastos",
+    "badge": "Excluída",
+    "badgeHint": "Fora dos totais de Gastos. Continua contando no saldo da conta.",
+    "statusFilter": "Excluídas de Gastos",
+    "excluded": "Excluída de Gastos",
+    "included": "Incluída novamente em Gastos"
   }
 }

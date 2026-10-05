@@ -13,6 +13,7 @@ use crate::{
 };
 use wealthfolio_core::activities::Activity;
 use wealthfolio_spending::activity_assignments::ActivityTaxonomyAssignment;
+use wealthfolio_spending::activity_exclusions::ActivityExclusion;
 use wealthfolio_spending::activity_splits::{ActivitySplit, NewActivitySplit};
 use wealthfolio_spending::analytics::{
     EventSpendingSummary, EventSummariesRequest, MonthlyReport, ReportRequest,
@@ -190,6 +191,30 @@ async fn set_activity_event(
         .set_event(&activity_id, body.event_id)
         .await?;
     Ok(Json(activity))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetExclusionBody {
+    excluded: bool,
+}
+
+async fn set_activity_spending_exclusion(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+    Path(activity_id): Path<String>,
+    Json(body): Json<SetExclusionBody>,
+) -> ApiResult<()> {
+    state
+        .cash_activity_service
+        .set_excluded(&activity_id, body.excluded)
+        .await?;
+    Ok(())
+}
+
+async fn list_spending_activity_exclusions(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+) -> ApiResult<Json<Vec<ActivityExclusion>>> {
+    Ok(Json(state.cash_activity_service.list_exclusions().await?))
 }
 
 async fn get_activity_assignments(
@@ -752,6 +777,14 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route(
             "/spending/cash-activities/{activity_id}/event",
             put(set_activity_event),
+        )
+        .route(
+            "/spending/cash-activities/{activity_id}/exclusion",
+            put(set_activity_spending_exclusion),
+        )
+        .route(
+            "/spending/activity-exclusions",
+            get(list_spending_activity_exclusions),
         )
         .route(
             "/spending/activities/{activity_id}/assignments",

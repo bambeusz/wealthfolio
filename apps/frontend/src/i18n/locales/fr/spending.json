@@ -1045,5 +1045,14 @@
     "overridesTitle_one": "Ajustement · {{count}}",
     "overridesTitle_other": "Ajustements · {{count}}",
     "overridesTitle_many": "Ajustements · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "Exclure des Dépenses",
+    "include": "Inclure dans les Dépenses",
+    "badge": "Exclue",
+    "badgeHint": "Hors des totaux de Dépenses. Compte toujours dans le solde du compte.",
+    "statusFilter": "Exclues des Dépenses",
+    "excluded": "Exclue des Dépenses",
+    "included": "De nouveau incluse dans les Dépenses"
   }
 }

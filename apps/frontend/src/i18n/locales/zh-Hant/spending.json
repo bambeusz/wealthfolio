@@ -988,5 +988,14 @@
     "overridesTitle_other": "自訂設定 · {{count}}",
     "addSource_one": "新增來源（{{count}} 個可用）",
     "overridesTitle_one": "覆寫 · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "從支出中排除",
+    "include": "計入支出",
+    "badge": "已排除",
+    "badgeHint": "不計入支出總計，但仍計入帳戶餘額。",
+    "statusFilter": "已從支出中排除",
+    "excluded": "已從支出中排除",
+    "included": "已重新計入支出"
   }
 }

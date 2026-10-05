@@ -827,6 +827,16 @@ pub(crate) async fn build_profile_state(
         activity_events_repo.clone(),
     ));
 
+    // Spending: per-activity "Exclude from Spending" switch, read by every totals service.
+    let activity_exclusions_repo: Arc<
+        dyn wealthfolio_spending::activity_exclusions::ActivityExclusionsRepositoryTrait,
+    > = Arc::new(
+        wealthfolio_storage_sqlite::spending::activity_exclusions::ActivityExclusionsRepository::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
+
     // Spending: cash_activity_service depends on activity_repository + spending settings
     //          + the assignments service (so search() can batch-fetch assignments and apply
     //          status/category filters server-side).
@@ -841,6 +851,7 @@ pub(crate) async fn build_profile_state(
             events_service.clone(),
             fx_service.clone(),
             taxonomy_service.clone(),
+            activity_exclusions_repo.clone(),
         ),
     );
 
@@ -877,6 +888,7 @@ pub(crate) async fn build_profile_state(
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),
+        activity_exclusions_repo.clone(),
     ));
 
     // Spending: analytics
@@ -899,6 +911,7 @@ pub(crate) async fn build_profile_state(
             events_service.clone(),
             fx_service.clone(),
             activity_events_repo.clone(),
+            activity_exclusions_repo.clone(),
         ));
 
     // Spending: reconciled period insight (powers the Spending Insight dashboard).
@@ -918,6 +931,7 @@ pub(crate) async fn build_profile_state(
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),
+        activity_exclusions_repo,
     ));
 
     // Alternative asset repository for alternative assets operations

@@ -16,6 +16,7 @@ import {
   isCashActivityIncome,
 } from "../lib/constants";
 import { CategoryBadge, ReviewPill, type CategoryMetaMap } from "./category-chips";
+import { ExcludedBadge } from "./excluded-badge";
 
 const SPENDING_TAXONOMY = "spending_categories";
 
@@ -25,7 +26,8 @@ export function RecentActivityCard({
   categoriesMeta,
   uncategorizedCount = 0,
 }: {
-  activities: Activity[];
+  /** Cash activities; `excludedFromSpending` marks rows left out of Spending. */
+  activities: (Activity & { excludedFromSpending?: boolean })[];
   accountTypeById?: Map<string, string>;
   categoriesMeta: CategoryMetaMap;
   uncategorizedCount?: number;
@@ -152,7 +154,9 @@ export function RecentActivityCard({
               const amount =
                 spendingAmount === 0 ? parseFloat(a.amount ?? "0") || 0 : Math.abs(spendingAmount);
               const badge = badgeByActivityId.get(a.id);
-              const needsReview = a.needsReview || (isOutflow && !badge);
+              const isExcluded = a.excludedFromSpending === true;
+              // An excluded row counts nowhere, so it never asks for a category.
+              const needsReview = !isExcluded && (a.needsReview || (isOutflow && !badge));
 
               return (
                 // Single transaction row → activities page filtered to this
@@ -181,7 +185,9 @@ export function RecentActivityCard({
                       )}
                     </div>
                   </div>
-                  {badge ? (
+                  {isExcluded ? (
+                    <ExcludedBadge />
+                  ) : badge ? (
                     <CategoryBadge name={badge.name} color={badge.color} icon={badge.icon} />
                   ) : needsReview ? (
                     <ReviewPill label={t("spending:dashboard.uncategorized")} />
@@ -189,7 +195,11 @@ export function RecentActivityCard({
                   <div
                     className={cn(
                       "shrink-0 text-xs font-semibold tabular-nums",
-                      isOutflow ? "text-foreground" : "text-success",
+                      isExcluded
+                        ? "text-muted-foreground"
+                        : isOutflow
+                          ? "text-foreground"
+                          : "text-success",
                     )}
                   >
                     {isOutflow ? "−" : "+"}

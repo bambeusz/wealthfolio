@@ -977,5 +977,14 @@
     "migrationNeeded": "現在のローカルデータベースは、支出機能の更新マイグレーション適用前に作成されています。",
     "addSource_other": "収入源を追加({{count}}件利用可能)",
     "overridesTitle_other": "個別設定 · {{count}}"
+  },
+  "exclusion": {
+    "exclude": "支出から除外",
+    "include": "支出に含める",
+    "badge": "除外",
+    "badgeHint": "支出の合計には含まれません。口座残高には引き続き反映されます。",
+    "statusFilter": "支出から除外",
+    "excluded": "支出から除外しました",
+    "included": "支出に再び含めました"
   }
 }

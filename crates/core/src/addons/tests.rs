@@ -495,6 +495,8 @@ fn test_detect_addon_permissions_spending() {
                 await ctx.api.spending.saveRule({});
                 await ctx.api.spending.deleteRule("rule-1");
                 await ctx.api.spending.rerunRules();
+                await ctx.api.spending.listExclusions();
+                await ctx.api.spending.setExclusion("activity-1", true);
             }
         "#
         .to_string(),
@@ -522,6 +524,8 @@ fn test_detect_addon_permissions_spending() {
             "saveRule",
             "deleteRule",
             "rerunRules",
+            "listExclusions",
+            "setExclusion",
         ])
     );
 
