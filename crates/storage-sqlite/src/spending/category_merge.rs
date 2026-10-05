@@ -507,6 +507,8 @@ pub(crate) fn apply_merge_receipts(
                     category_id: Some(root.clone()),
                     group_id: None,
                     amount: value.amount,
+                    pacing: None,
+                    due_day: None,
                 },
                 now,
             )?;

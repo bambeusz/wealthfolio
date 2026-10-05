@@ -401,6 +401,9 @@ pub fn merged_category_targets(
             category_id: Some(destination.id.clone()),
             group_id: None,
             amount,
+            // An existing destination row keeps its pacing.
+            pacing: None,
+            due_day: None,
         })
     })
     .collect()

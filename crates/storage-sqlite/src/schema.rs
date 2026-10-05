@@ -736,6 +736,8 @@ diesel::table! {
         amount -> Text,
         created_at -> Text,
         updated_at -> Text,
+        pacing -> Text,
+        due_day -> Nullable<Integer>,
     }
 }
 

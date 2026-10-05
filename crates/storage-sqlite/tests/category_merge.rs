@@ -158,6 +158,8 @@ impl Fixture {
                 category_id: Some(category.into()),
                 group_id: None,
                 amount: amount.into(),
+                pacing: None,
+                due_day: None,
             })
             .await
             .unwrap();
@@ -1003,6 +1005,8 @@ async fn income_targets_merge_without_touching_same_id_expense_records_or_exclus
                 category_id: Some(id.into()),
                 group_id: None,
                 amount: amount.into(),
+                pacing: None,
+                due_day: None,
             })
             .await
             .unwrap();

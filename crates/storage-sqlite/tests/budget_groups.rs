@@ -126,6 +126,8 @@ impl Fixture {
                 category_id: None,
                 group_id: Some(group.into()),
                 amount: amount.into(),
+                pacing: None,
+                due_day: None,
             })
             .await
             .unwrap();
@@ -174,6 +176,8 @@ async fn optional_defaults_stay_deleted_across_reads_reviewed_writes_and_restart
                     category_id: None,
                     group_id: Some(DESTINATION.into()),
                     amount: "25".into(),
+                    pacing: None,
+                    due_day: None,
                 },
             },
             Some("2026-03".into()),
@@ -260,6 +264,8 @@ async fn only_other_is_synthesized_and_materialized_on_reads_and_reviewed_writes
                     category_id: None,
                     group_id: Some(OTHER.into()),
                     amount: "10".into(),
+                    pacing: None,
+                    due_day: None,
                 },
             },
             Some("2026-03".into()),
@@ -364,6 +370,8 @@ async fn deleting_savings_group_preserves_category_targets_actuals_and_goal_roll
                     category_id: Some(category.into()),
                     group_id: None,
                     amount: amount.into(),
+                    pacing: None,
+                    due_day: None,
                 })
                 .await
                 .unwrap();

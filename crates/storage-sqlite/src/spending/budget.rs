@@ -19,7 +19,7 @@ use crate::spending::deterministic_ids::{
 };
 use wealthfolio_core::sync::{SyncEntity, SyncOperation};
 use wealthfolio_spending::budget::{
-    BudgetGroup, BudgetGroupAssignment, BudgetRepositoryTrait, BudgetRolloverSetting,
+    BudgetGroup, BudgetGroupAssignment, BudgetPacing, BudgetRepositoryTrait, BudgetRolloverSetting,
     BudgetRolloverTargetType, BudgetTarget, BudgetTargetType, NewBudgetGroup,
     NewBudgetGroupAssignment, NewBudgetRolloverSetting, NewBudgetTarget, UpdateBudgetGroup,
 };
@@ -113,6 +113,8 @@ pub struct BudgetTargetDB {
     pub amount: String,
     pub created_at: String,
     pub updated_at: String,
+    pub pacing: String,
+    pub due_day: Option<i32>,
 }
 
 #[derive(Insertable, Serialize, Deserialize, Debug, Clone)]
@@ -127,6 +129,8 @@ pub struct NewBudgetTargetDB {
     pub amount: String,
     pub created_at: String,
     pub updated_at: String,
+    pub pacing: String,
+    pub due_day: Option<i32>,
 }
 
 impl crate::sync::SyncOutboxModel for BudgetTargetDB {
@@ -257,6 +261,8 @@ impl From<BudgetTargetDB> for BudgetTarget {
             category_id: db.category_id,
             group_id: db.group_id,
             amount: db.amount,
+            pacing: BudgetPacing::from_db(&db.pacing),
+            due_day: db.due_day,
             created_at: parse_dt(&db.created_at),
             updated_at: parse_dt(&db.updated_at),
         }
@@ -525,10 +531,30 @@ impl BudgetRepositoryTrait for BudgetRepository {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    async fn delete_target(&self, id: &str) -> Result<()> {
-        let id = id.to_string();
+    async fn upsert_targets(&self, targets: Vec<NewBudgetTarget>) -> Result<Vec<BudgetTarget>> {
         self.writer
-            .exec_tx(move |tx| delete_target_tx(tx, &id))
+            .exec_tx(move |tx| {
+                targets
+                    .into_iter()
+                    .map(|target| upsert_target_tx(tx, target))
+                    .collect::<wealthfolio_core::Result<Vec<_>>>()
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn delete_target(&self, id: &str) -> Result<()> {
+        self.delete_targets(vec![id.to_string()]).await
+    }
+
+    async fn delete_targets(&self, ids: Vec<String>) -> Result<()> {
+        self.writer
+            .exec_tx(move |tx| {
+                for id in ids {
+                    delete_target_tx(tx, &id)?;
+                }
+                Ok(())
+            })
             .await
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -903,7 +929,11 @@ pub(crate) fn upsert_target_row(
         category_id,
         group_id,
         amount,
+        pacing,
+        due_day,
     } = target;
+    // A caller that sends no pacing (an amount-only edit) keeps the stored one.
+    let keep_pacing = pacing.is_none();
     let target_type = target_type.as_str().to_string();
     let id = id.unwrap_or_else(|| {
         budget_target_id(
@@ -924,6 +954,8 @@ pub(crate) fn upsert_target_row(
         amount,
         created_at: now.to_string(),
         updated_at: now.to_string(),
+        pacing: pacing.unwrap_or_default().as_str().to_string(),
+        due_day: if keep_pacing { None } else { due_day },
     };
     {
         let existing_id = if row.target_type == "category" {
@@ -947,13 +979,25 @@ pub(crate) fn upsert_target_row(
                 .map_err(StorageError::from)?
         };
         let result = if let Some(existing_id) = existing_id {
-            diesel::update(budget_targets::table.find(&existing_id))
-                .set((
-                    budget_targets::amount.eq(&row.amount),
-                    budget_targets::updated_at.eq(&row.updated_at),
-                ))
-                .execute(conn)
-                .map_err(StorageError::from)?;
+            if keep_pacing {
+                diesel::update(budget_targets::table.find(&existing_id))
+                    .set((
+                        budget_targets::amount.eq(&row.amount),
+                        budget_targets::updated_at.eq(&row.updated_at),
+                    ))
+                    .execute(conn)
+                    .map_err(StorageError::from)?;
+            } else {
+                diesel::update(budget_targets::table.find(&existing_id))
+                    .set((
+                        budget_targets::amount.eq(&row.amount),
+                        budget_targets::pacing.eq(&row.pacing),
+                        budget_targets::due_day.eq(row.due_day),
+                        budget_targets::updated_at.eq(&row.updated_at),
+                    ))
+                    .execute(conn)
+                    .map_err(StorageError::from)?;
+            }
             budget_targets::table
                 .find(&existing_id)
                 .first::<BudgetTargetDB>(conn)
@@ -1197,6 +1241,8 @@ fn copy_period_targets_tx(
                 amount: source_row.amount.clone(),
                 created_at: now.clone(),
                 updated_at: now.clone(),
+                pacing: source_row.pacing.clone(),
+                due_day: source_row.due_day,
             };
             let inserted = diesel::insert_into(budget_targets::table)
                 .values(&new_row)
@@ -1294,6 +1340,8 @@ mod tests {
             category_id: None,
             group_id: Some(group.into()),
             amount: amount.into(),
+            pacing: None,
+            due_day: None,
         })
         .await
         .unwrap();
@@ -1849,5 +1897,216 @@ mod tests {
             );
         }
         assert!(!repo.list_groups().await.unwrap().iter().any(|g| g.id == id));
+    }
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+    use crate::db::{create_pool, init, run_migrations, write_actor::spawn_writer, TestDir};
+
+    const PACING_UP: &str =
+        include_str!("../../migrations/2026-10-05-000002_budget_target_pacing/up.sql");
+    const PACING_DOWN: &str =
+        include_str!("../../migrations/2026-10-05-000002_budget_target_pacing/down.sql");
+
+    fn setup() -> (BudgetRepository, String, TestDir) {
+        let dir = TestDir::new();
+        let db_path = init(&dir.path().to_string_lossy()).expect("init db");
+        run_migrations(&db_path).expect("migrate db");
+        let pool = create_pool(&db_path).expect("create pool");
+        let writer = spawn_writer(pool.as_ref().clone()).expect("writer");
+        (BudgetRepository::new(pool, writer), db_path, dir)
+    }
+
+    fn housing(
+        period_key: &str,
+        amount: &str,
+        pacing: Option<BudgetPacing>,
+        due_day: Option<i32>,
+    ) -> NewBudgetTarget {
+        NewBudgetTarget {
+            id: None,
+            period_key: period_key.to_string(),
+            target_type: BudgetTargetType::Category,
+            taxonomy_id: Some("spending_categories".to_string()),
+            category_id: Some("cat_housing".to_string()),
+            group_id: None,
+            amount: amount.to_string(),
+            pacing,
+            due_day,
+        }
+    }
+
+    fn insert_raw(db_path: &str, pacing: &str, due_day: &str) -> rusqlite::Result<usize> {
+        let conn = rusqlite::Connection::open(db_path).expect("open db");
+        conn.execute(
+            &format!(
+                "INSERT INTO budget_targets (id, period_key, target_type, taxonomy_id, \
+                 category_id, amount, pacing, due_day) VALUES ('raw-{pacing}-{due_day}', \
+                 'default', 'category', 'spending_categories', 'cat_food', '10', \
+                 '{pacing}', {due_day})"
+            ),
+            [],
+        )
+    }
+
+    #[tokio::test]
+    async fn pacing_columns_are_checked() {
+        let (_repo, db_path, _dir) = setup();
+        assert!(insert_raw(&db_path, "weekly", "NULL").is_err());
+        assert!(insert_raw(&db_path, "monthly_on_day", "0").is_err());
+        assert!(insert_raw(&db_path, "monthly_on_day", "32").is_err());
+        assert!(insert_raw(&db_path, "monthly_on_day", "31").is_ok());
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute(
+            "INSERT INTO budget_targets (id, period_key, target_type, taxonomy_id, \
+             category_id, amount) VALUES ('defaulted', '2026-10', 'category', \
+             'spending_categories', 'cat_food', '10')",
+            [],
+        )
+        .expect("insert without pacing");
+        let (pacing, due_day): (String, Option<i32>) = conn
+            .query_row(
+                "SELECT pacing, due_day FROM budget_targets WHERE id = 'defaulted'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read defaults");
+        assert_eq!(pacing, "linear");
+        assert_eq!(due_day, None);
+    }
+
+    #[tokio::test]
+    async fn pacing_migration_reverts_and_reapplies() {
+        let (_repo, db_path, _dir) = setup();
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute(
+            "INSERT INTO budget_targets (id, period_key, target_type, taxonomy_id, \
+             category_id, amount, pacing, due_day) VALUES ('kept', 'default', 'category', \
+             'spending_categories', 'cat_housing', '1200', 'monthly_on_day', 1)",
+            [],
+        )
+        .expect("insert row");
+        conn.execute_batch(PACING_DOWN).expect("down migration");
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('budget_targets')")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()
+            })
+            .expect("columns");
+        assert!(!columns.iter().any(|c| c == "pacing" || c == "due_day"));
+        let amount: String = conn
+            .query_row(
+                "SELECT amount FROM budget_targets WHERE id = 'kept'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("row survives");
+        assert_eq!(amount, "1200");
+        conn.execute_batch(PACING_UP).expect("up migration again");
+        let pacing: String = conn
+            .query_row(
+                "SELECT pacing FROM budget_targets WHERE id = 'kept'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("re-added column");
+        assert_eq!(pacing, "linear");
+    }
+
+    #[tokio::test]
+    async fn upsert_round_trips_and_keeps_pacing_when_none_is_sent() {
+        let (repo, _, _dir) = setup();
+        let saved = repo
+            .upsert_target(housing(
+                "default",
+                "1200",
+                Some(BudgetPacing::MonthlyOnDay),
+                Some(3),
+            ))
+            .await
+            .expect("save");
+        assert_eq!(saved.pacing, BudgetPacing::MonthlyOnDay);
+        assert_eq!(saved.due_day, Some(3));
+
+        let updated = repo
+            .upsert_target(housing("default", "1300", None, None))
+            .await
+            .expect("update amount");
+        assert_eq!(updated.id, saved.id);
+        assert_eq!(updated.amount, "1300");
+        assert_eq!(updated.pacing, BudgetPacing::MonthlyOnDay);
+        assert_eq!(updated.due_day, Some(3));
+
+        let linear = repo
+            .upsert_target(housing("default", "1300", Some(BudgetPacing::Linear), None))
+            .await
+            .expect("switch to linear");
+        assert_eq!(linear.pacing, BudgetPacing::Linear);
+        assert_eq!(linear.due_day, None);
+    }
+
+    #[tokio::test]
+    async fn copy_period_targets_carries_pacing() {
+        let (repo, _, _dir) = setup();
+        repo.upsert_target(housing(
+            "2026-09",
+            "1200",
+            Some(BudgetPacing::MonthlyOnDay),
+            Some(31),
+        ))
+        .await
+        .expect("save");
+        let copied = repo
+            .copy_period_targets("2026-09", "2026-10", false)
+            .await
+            .expect("copy");
+        assert_eq!(copied.len(), 1);
+        assert_eq!(copied[0].pacing, BudgetPacing::MonthlyOnDay);
+        assert_eq!(copied[0].due_day, Some(31));
+    }
+
+    #[tokio::test]
+    async fn bulk_upsert_and_delete_run_in_one_transaction() {
+        let (repo, _, _dir) = setup();
+        let saved = repo
+            .upsert_targets(vec![
+                housing("2026-10", "1200", Some(BudgetPacing::MonthlyOnDay), Some(1)),
+                NewBudgetTarget {
+                    category_id: Some("cat_food".to_string()),
+                    ..housing("2026-10", "300", None, None)
+                },
+            ])
+            .await
+            .expect("bulk save");
+        assert_eq!(saved.len(), 2);
+
+        // A failing row rolls back the whole batch.
+        let failed = repo
+            .upsert_targets(vec![
+                housing("2026-11", "1200", None, None),
+                // Violates the table CHECK: a category target needs a taxonomy.
+                NewBudgetTarget {
+                    taxonomy_id: None,
+                    category_id: Some("cat_food".to_string()),
+                    ..housing("2026-11", "1", None, None)
+                },
+            ])
+            .await;
+        assert!(failed.is_err());
+        assert!(repo
+            .list_targets()
+            .await
+            .expect("list")
+            .iter()
+            .all(|t| t.period_key != "2026-11"));
+
+        repo.delete_targets(saved.iter().map(|t| t.id.clone()).collect())
+            .await
+            .expect("bulk delete");
+        assert!(repo.list_targets().await.expect("list").is_empty());
     }
 }

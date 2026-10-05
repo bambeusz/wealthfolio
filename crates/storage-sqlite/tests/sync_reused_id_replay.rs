@@ -515,6 +515,8 @@ fn category_target(period_key: &str, category_id: &str, amount: &str) -> NewBudg
         category_id: Some(category_id.to_string()),
         group_id: None,
         amount: amount.to_string(),
+        pacing: None,
+        due_day: None,
     }
 }
 

@@ -1,6 +1,8 @@
 import { invoke, logger } from "#platform";
 import type {
   BudgetSnapshot,
+  BudgetTarget,
+  BudgetTargetInput,
   NewBudgetGroup,
   NewBudgetRolloverSetting,
   NewBudgetTarget,
@@ -24,6 +26,29 @@ export const upsertBudgetTarget = async (
     return await invoke<BudgetSnapshot>("upsert_budget_target", { target, periodKey });
   } catch (e) {
     logger.error("Error saving budget target.");
+    throw e;
+  }
+};
+
+/** Upserts many targets of one period in one transaction; returns that period's targets. */
+export const setBudgetTargets = async (
+  periodKey: string,
+  targets: BudgetTargetInput[],
+): Promise<BudgetTarget[]> => {
+  try {
+    return await invoke<BudgetTarget[]>("set_budget_targets", { periodKey, targets });
+  } catch (e) {
+    logger.error("Error saving budget targets.");
+    throw e;
+  }
+};
+
+/** Deletes targets of one period; every id must belong to `periodKey`. */
+export const deleteBudgetTargets = async (periodKey: string, ids: string[]): Promise<void> => {
+  try {
+    await invoke<void>("delete_budget_targets", { periodKey, ids });
+  } catch (e) {
+    logger.error("Error deleting budget targets.");
     throw e;
   }
 };

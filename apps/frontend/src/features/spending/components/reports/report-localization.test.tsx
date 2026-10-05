@@ -133,8 +133,13 @@ const budgetRow = (
   hasDefaultTarget: true,
   hasMonthOverride: false,
   rolloverEnabled: false,
+  pacing: "linear",
+  dueDay: null,
+  expectedToDate: 0,
+  projected: 0,
+  paceStatus: "on_track",
 });
-const group = (id: string, name: string, categories: BudgetCategoryRow[]): BudgetGroupRow => ({
+const group =(id: string, name: string, categories: BudgetCategoryRow[]): BudgetGroupRow => ({
   group: {
     id,
     name,

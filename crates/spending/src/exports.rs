@@ -628,6 +628,8 @@ mod tests {
             category_id: Some("food".into()),
             group_id: None,
             amount: "300".into(),
+            pacing: crate::budget::BudgetPacing::Linear,
+            due_day: None,
             created_at: at,
             updated_at: at,
         };
