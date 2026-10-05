@@ -1029,6 +1029,75 @@ The exclusion lives on this device only; it is not part of device sync.
 
 ---
 
+## Budgets API
+
+Read and write the user's native monthly spending budgets — the same groups and
+targets the Budget page edits. All methods use the medium-risk `budgets`
+permission.
+
+A target belongs to a period: `"default"` applies to every month, and a
+`"YYYY-MM"` target overrides it for that month. A category target can carry a
+`pacing`: `"linear"` (spread over the month, the default) or `"monthly_on_day"`
+with a `dueDay` of 1–31 (spent once; a day past the month's end falls on its
+last day). Pacing drives the on-track status everywhere in Wealthfolio, so rent
+paid on its due day reads as on track instead of "ahead of pace".
+
+### Methods
+
+#### `getGroups(): Promise<BudgetGroup[]>`
+
+Lists the budget groups (Needs, Wants, …). Empty while Spending is disabled.
+
+#### `getTargets(periodKey: string): Promise<BudgetTarget[]>`
+
+Lists the targets stored for one period. For a month this returns only its
+overrides; the effective amount of a category without an override is its
+`"default"` target. Empty while Spending is disabled.
+
+```typescript
+const defaults = await ctx.api.budgets.getTargets("default");
+const october = await ctx.api.budgets.getTargets("2026-10");
+```
+
+#### `setTargets(periodKey: string, targets: BudgetTargetInput[]): Promise<BudgetTarget[]>`
+
+Creates or updates targets of one period in a single transaction and returns
+every target now stored for that period. Each input is matched by its category
+(or group, for a `group_buffer`), so repeating a call changes nothing — writing
+a year of targets is twelve idempotent calls. A category may appear only once
+per call. Omitting `pacing` keeps the stored pacing; a new month override
+inherits the `"default"` target's pacing. Group buffers are always linear.
+
+```typescript
+await ctx.api.budgets.setTargets("2026-10", [
+  {
+    targetType: "category",
+    categoryId: "cat_housing",
+    amount: 1200,
+    pacing: "monthly_on_day",
+    dueDay: 1,
+  },
+  { targetType: "category", categoryId: "cat_groceries", amount: "450.50" },
+  { targetType: "group_buffer", groupId: groupId, amount: 50 },
+]);
+```
+
+#### `deleteTargets(periodKey: string, ids: string[]): Promise<void>`
+
+Deletes targets of one period. Every id must belong to `periodKey`; if one
+doesn't, nothing is deleted and the promise rejects. Deleting a month override
+makes that month fall back to the `"default"` target.
+
+```typescript
+const overrides = await ctx.api.budgets.getTargets("2026-10");
+await ctx.api.budgets.deleteTargets(
+  "2026-10",
+  overrides.map((target) => target.id),
+);
+```
+
+---
+
 ## Contribution Limits API
 
 Manage investment contribution limits and calculations.

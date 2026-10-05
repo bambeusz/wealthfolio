@@ -12,9 +12,7 @@ import {
   useDateFormatting,
 } from "@wealthfolio/ui";
 
-import { topCategoryId } from "../lib/category-rollup";
-import type { BudgetCategoryRow } from "../types/budget";
-import type { DayBucket } from "../types/report";
+import type { BudgetCategoryRow, BudgetPace, PaceStatus } from "../types/budget";
 import { CategoryIcon, type CategoryMetaMap } from "./category-chips";
 
 type Status = "ok" | "warn" | "over";
@@ -28,7 +26,13 @@ interface BudgetToday {
   day: number;
 }
 
-const MIN_HISTORICAL_PACE_MONTHS = 2;
+// The status comes from the backend pace (`budget::pacing`), shared with the
+// rings, the Insights page and the health status — never re-derived here.
+const STATUS_FROM_PACE: Record<PaceStatus, Status> = {
+  on_track: "ok",
+  approaching: "warn",
+  over: "over",
+};
 
 function parseMonthKey(value: string | null | undefined): { year: number; month: number } | null {
   if (!value || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
@@ -77,15 +81,10 @@ export function BudgetLineChartCard({
   onNextMonth,
   canGoNextMonth,
   activityRange,
-  target,
-  spent,
+  pace,
   currency,
-  historicalDailyAvg,
   allocations,
-  spendingBreakdown,
   categoriesMeta,
-  monthByDay,
-  historicalByDay,
 }: {
   monthKey: string;
   today: BudgetToday;
@@ -94,20 +93,19 @@ export function BudgetLineChartCard({
   onNextMonth: () => void;
   canGoNextMonth: boolean;
   activityRange: { from: string; to: string };
-  target: number;
-  spent: number;
+  /** Month pace from the budget snapshot (`computed.pace`). */
+  pace: BudgetPace | null;
   currency: string;
-  historicalDailyAvg: number;
   allocations: BudgetCategoryRow[];
-  spendingBreakdown: { categoryId: string; amount: number; count: number }[];
   categoriesMeta: CategoryMetaMap;
-  monthByDay: DayBucket[];
-  historicalByDay: DayBucket[];
 }) {
   const amountFormatting = useAmountFormatting();
   const dateFormatting = useDateFormatting();
 
   const { t } = useTranslation();
+  const target = pace?.available ?? 0;
+  const spent = pace?.spent ?? 0;
+  const live = pace?.live ?? isCurrentMonth;
   // All hooks must run unconditionally — the `target <= 0` early return below
   // sits between hooks otherwise, which trips "Rendered more hooks than during
   // the previous render" when a target is added or cleared.
@@ -115,12 +113,12 @@ export function BudgetLineChartCard({
     const parts = parseMonthKey(monthKey) ?? today;
     const year = parts.year;
     const month = parts.month;
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const dayOfMonth = isCurrentMonth ? Math.min(today.day, daysInMonth) : daysInMonth;
+    const daysInMonth = pace?.totalDays ?? new Date(year, month, 0).getDate();
+    const dayOfMonth =
+      pace?.elapsedDays ?? (isCurrentMonth ? Math.min(today.day, daysInMonth) : daysInMonth);
     return {
       dayOfMonth,
       daysInMonth,
-      daysRemaining: isCurrentMonth ? Math.max(0, daysInMonth - dayOfMonth) : 0,
       monthLabel: dateFormatting
         .formatCalendarDate(
           { year, month, day: 1 },
@@ -134,36 +132,24 @@ export function BudgetLineChartCard({
         )
         .toUpperCase(),
     };
-  }, [monthKey, isCurrentMonth, dateFormatting, today]);
-  const { dayOfMonth, daysInMonth, daysRemaining, monthLabel } = monthMeta;
+  }, [monthKey, isCurrentMonth, dateFormatting, today, pace?.totalDays, pace?.elapsedDays]);
+  const { dayOfMonth, daysInMonth, monthLabel } = monthMeta;
 
-  const cumulative = useMemo(() => {
-    const byDay = new Map<number, number>();
-    for (const b of monthByDay) {
-      const d = parseInt(b.date.split("-")[2], 10);
-      if (Number.isFinite(d)) byDay.set(d, (byDay.get(d) ?? 0) + b.outflow);
-    }
-    let running = 0;
-    const out: { day: number; value: number }[] = [];
-    for (let d = 1; d <= dayOfMonth; d++) {
-      running += byDay.get(d) ?? 0;
-      out.push({ day: d, value: running });
-    }
-    return out;
-  }, [monthByDay, dayOfMonth]);
+  const cumulative = useMemo(
+    () => (pace?.spentCurve ?? []).map((value, index) => ({ day: index + 1, value })),
+    [pace?.spentCurve],
+  );
 
   const rings = useMemo(() => {
-    const spentByTop = new Map<string, number>();
-    for (const row of spendingBreakdown) {
-      const topId = topCategoryId(row.categoryId, categoriesMeta);
-      spentByTop.set(topId, (spentByTop.get(topId) ?? 0) + row.amount);
-    }
     return allocations
       .map((al) => {
         const t = al.target || 0;
         if (t <= 0) return null;
         const meta = categoriesMeta.get(al.categoryId);
-        const s = spentByTop.get(al.categoryId) ?? 0;
+        const s = Math.max(0, al.actual);
+        // Before a once-a-month category's due day, the ring says when it's due.
+        const dueDay =
+          al.pacing === "monthly_on_day" && al.dueDay ? Math.min(al.dueDay, daysInMonth) : null;
         return {
           id: al.categoryId,
           categoryId: al.categoryId,
@@ -171,13 +157,16 @@ export function BudgetLineChartCard({
           color: meta?.color ?? null,
           icon: meta?.icon ?? null,
           target: t,
-          spent: Math.max(0, s),
-          pct: Math.max(0, s) / t,
+          spent: s,
+          remaining: al.remaining,
+          pct: s / t,
+          status: al.paceStatus ?? "on_track",
+          dueDay: live && dueDay !== null && dayOfMonth < dueDay ? dueDay : null,
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null)
       .sort((x, y) => y.pct - x.pct);
-  }, [allocations, spendingBreakdown, categoriesMeta]);
+  }, [allocations, categoriesMeta, daysInMonth, dayOfMonth, live]);
 
   // Chart geometry derived from target — captured here so actualPath useMemo
   // can depend on stable primitives instead of recomputing each render.
@@ -189,48 +178,30 @@ export function BudgetLineChartCard({
   const padB = 14;
   const innerW = chartW - padL - padR;
   const innerH = chartH - padT - padB;
-  const yMax = Math.max(target, spent) * 1.05;
+  const expectedCurve = pace?.expectedCurve;
+  const yMax = Math.max(target, spent, ...(expectedCurve ?? [0])) * 1.05;
 
   const actualPath = useMemo(() => {
-    if (!cumulative.length) return "";
+    if (!cumulative.length || yMax <= 0) return "";
     const xForDay = (day: number) => padL + ((day - 1) / Math.max(1, daysInMonth - 1)) * innerW;
     const yForVal = (v: number) => padT + (1 - v / yMax) * innerH;
-    return (
-      "M " +
-      cumulative
-        .map((p) => `${xForDay(p.day).toFixed(2)} ${yForVal(p.value).toFixed(2)}`)
-        .join(" L ")
-    );
+    return toSvgPath(cumulative, xForDay, yForVal);
   }, [cumulative, daysInMonth, innerW, innerH, padL, padT, yMax]);
 
-  const historicalPace = useMemo(
-    () => buildHistoricalPaceCurve(historicalByDay, daysInMonth),
-    [historicalByDay, daysInMonth],
-  );
-
+  // The expected line steps up on each once-a-month due day and follows the
+  // historical (or even) curve for the rest.
   const targetPacePath = useMemo(() => {
-    if (!historicalPace || target <= 0) return "";
+    if (!expectedCurve?.length || target <= 0 || yMax <= 0) return "";
     const xForDay = (day: number) => padL + ((day - 1) / Math.max(1, daysInMonth - 1)) * innerW;
     const yForVal = (v: number) => padT + (1 - v / yMax) * innerH;
     return toSvgPath(
-      historicalPace.points.map((p) => ({
-        day: p.day,
-        value: p.value * target,
-      })),
+      expectedCurve.map((value, index) => ({ day: index + 1, value })),
       xForDay,
       yForVal,
     );
-  }, [historicalPace, target, daysInMonth, innerW, innerH, padL, padT, yMax]);
+  }, [expectedCurve, target, daysInMonth, innerW, innerH, padL, padT, yMax]);
 
-  const haveHistory = historicalDailyAvg > 0;
-  const forecast =
-    target > 0 && isCurrentMonth
-      ? haveHistory
-        ? spent + historicalDailyAvg * daysRemaining
-        : dayOfMonth > 0
-          ? (spent / dayOfMonth) * daysInMonth
-          : 0
-      : 0;
+  const forecast = pace?.projected ?? 0;
   const headerAction = (
     <BudgetCardHeaderActions
       monthLabel={monthMeta.shortLabel}
@@ -262,23 +233,18 @@ export function BudgetLineChartCard({
 
   const remaining = Math.max(0, target - spent);
   const overBy = spent - target;
-  const isOver = overBy > 0;
-  const forecastReliable = isCurrentMonth && (haveHistory || dayOfMonth >= 7);
+  const status: Status = pace ? STATUS_FROM_PACE[pace.status] : "ok";
+  const isOver = status === "over";
+  const forecastReliable = live && (pace?.projectionReliable ?? false);
   const forecastDelta = forecast - target;
   const willOverspend = forecastReliable && forecastDelta > 0;
 
-  const historicalPaceAtToday = historicalPace?.pctByDay[dayOfMonth];
-  const paceAtToday =
-    target *
-    (historicalPaceAtToday !== undefined ? historicalPaceAtToday : dayOfMonth / daysInMonth);
-  const gapVsPace = spent - paceAtToday;
-  const aheadOfPace = gapVsPace < 0;
+  const gapVsPace = spent - (pace?.expectedToDate ?? 0);
+  const aheadOfPace = gapVsPace <= 0;
 
-  const status: Status = isOver ? "over" : isCurrentMonth && !aheadOfPace ? "warn" : "ok";
   const a = STATUS_ACCENTS[status];
   const { Icon } = a;
-  const statusLabel =
-    !isCurrentMonth && !isOver ? t("spending:budgetChart.underBudget") : t(a.labelKey);
+  const statusLabel = !live && !isOver ? t("spending:budgetChart.underBudget") : t(a.labelKey);
 
   const xForDay = (day: number) => padL + ((day - 1) / Math.max(1, daysInMonth - 1)) * innerW;
   const yForVal = (v: number) => padT + (1 - v / yMax) * innerH;
@@ -292,7 +258,7 @@ export function BudgetLineChartCard({
   const endY = cumulative.length ? yForVal(cumulative[cumulative.length - 1].value) : padT + innerH;
 
   const gapAbs = Math.abs(gapVsPace);
-  const gapLabel = isCurrentMonth
+  const gapLabel = live
     ? isOver
       ? t("spending:budgetChart.overBudgetAmount", {
           amount: amountFormatting.formatCompactAmount(overBy, currency),
@@ -329,14 +295,14 @@ export function BudgetLineChartCard({
         <Icon className="h-4 w-4 shrink-0" style={{ color: a.accent }} />
         <span className="text-foreground text-sm font-semibold">{statusLabel}</span>
         <span className="text-muted-foreground/70 ml-auto text-xs tabular-nums">
-          {isCurrentMonth
+          {live
             ? t("spending:budgetChart.dayOf", { day: dayOfMonth, total: daysInMonth })
             : t("spending:budgetChart.closed")}
         </span>
       </div>
 
       <div className="mt-3">
-        {isCurrentMonth && willOverspend && forecastDelta > target * 0.05 ? (
+        {live && willOverspend && forecastDelta > target * 0.05 ? (
           <>
             <div className="text-foreground text-2xl font-bold tabular-nums tracking-tight">
               <PrivacyAmount value={forecast} currency={currency} />{" "}
@@ -356,7 +322,7 @@ export function BudgetLineChartCard({
               {t("spending:budgetChart.budgetedThisMonth")}
             </div>
           </>
-        ) : !isCurrentMonth ? (
+        ) : !live ? (
           <>
             <div className="text-foreground text-2xl font-bold tabular-nums tracking-tight">
               <PrivacyAmount value={spent} currency={currency} />{" "}
@@ -478,9 +444,7 @@ export function BudgetLineChartCard({
       <div className="border-border mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-xs">
         <div>
           <div className="text-muted-foreground/70 text-[11px] uppercase tracking-wide">
-            {isCurrentMonth
-              ? t("spending:budgetChart.spentSoFar")
-              : t("spending:budgetChart.spentUpper")}
+            {live ? t("spending:budgetChart.spentSoFar") : t("spending:budgetChart.spentUpper")}
           </div>
           <div className="text-foreground text-sm font-semibold tabular-nums">
             <PrivacyAmount value={spent} currency={currency} />
@@ -488,11 +452,9 @@ export function BudgetLineChartCard({
         </div>
         <div className="text-right">
           <div className="text-muted-foreground/70 text-[11px] uppercase tracking-wide">
-            {isCurrentMonth
-              ? t("spending:budgetChart.forecastUpper")
-              : t("spending:budgetChart.result")}
+            {live ? t("spending:budgetChart.forecastUpper") : t("spending:budgetChart.result")}
           </div>
-          {isCurrentMonth ? (
+          {live ? (
             <div
               className={cn(
                 "text-sm font-semibold tabular-nums",
@@ -516,11 +478,9 @@ export function BudgetLineChartCard({
             </div>
           )}
           <div className="text-muted-foreground/60 text-[10px]">
-            {isCurrentMonth
+            {live
               ? forecastReliable
-                ? haveHistory
-                  ? t("spending:budgetChart.vsLast3Months")
-                  : t("spending:budgetChart.atCurrentPace")
+                ? t("spending:budgetChart.atCurrentPace")
                 : t("spending:budgetChart.moreDataNeeded")
               : isOver
                 ? t("spending:budgetChart.overBudgetLower")
@@ -566,73 +526,6 @@ export function BudgetLineChartCard({
   );
 }
 
-function buildHistoricalPaceCurve(
-  byDay: DayBucket[],
-  currentDaysInMonth: number,
-): { points: PacePoint[]; pctByDay: number[] } | null {
-  const months = new Map<
-    string,
-    { daysInMonth: number; outflowByDay: Map<number, number>; total: number }
-  >();
-
-  for (const bucket of byDay) {
-    const parsed = parseDayBucketDate(bucket.date);
-    if (!parsed) continue;
-    const outflow = Number.isFinite(bucket.outflow) ? bucket.outflow : 0;
-
-    const key = `${parsed.year}-${String(parsed.month).padStart(2, "0")}`;
-    const month = months.get(key) ?? {
-      daysInMonth: new Date(parsed.year, parsed.month, 0).getDate(),
-      outflowByDay: new Map<number, number>(),
-      total: 0,
-    };
-    month.outflowByDay.set(parsed.day, (month.outflowByDay.get(parsed.day) ?? 0) + outflow);
-    month.total += outflow;
-    months.set(key, month);
-  }
-
-  const eligibleMonths = Array.from(months.values())
-    .filter((month) => month.total > 0)
-    .map((month) => {
-      const cumulativeByDay = Array.from({ length: month.daysInMonth + 1 }, () => 0);
-      let running = 0;
-      for (let day = 1; day <= month.daysInMonth; day++) {
-        running += month.outflowByDay.get(day) ?? 0;
-        cumulativeByDay[day] = Math.max(cumulativeByDay[day - 1], clamp(running, 0, month.total));
-      }
-      return { ...month, cumulativeByDay };
-    });
-
-  if (eligibleMonths.length < MIN_HISTORICAL_PACE_MONTHS) return null;
-
-  const pctByDay = Array.from({ length: currentDaysInMonth + 1 }, () => 0);
-  const points: PacePoint[] = [];
-  for (let day = 1; day <= currentDaysInMonth; day++) {
-    const values = eligibleMonths.map((month) => {
-      const historyDay = Math.min(
-        month.daysInMonth,
-        Math.max(1, Math.ceil((day / currentDaysInMonth) * month.daysInMonth)),
-      );
-      return clamp(month.cumulativeByDay[historyDay] / month.total, 0, 1);
-    });
-    const value = median(values);
-    pctByDay[day] = value;
-    points.push({ day, value });
-  }
-
-  return { points, pctByDay };
-}
-
-function parseDayBucketDate(date: string): { year: number; month: number; day: number } | null {
-  const [yearRaw, monthRaw, dayRaw] = date.split("-");
-  const year = Number(yearRaw);
-  const month = Number(monthRaw);
-  const day = Number(dayRaw);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return { year, month, day };
-}
-
 function toSvgPath(
   points: PacePoint[],
   xForDay: (day: number) => number,
@@ -643,17 +536,6 @@ function toSvgPath(
     "M " +
     points.map((p) => `${xForDay(p.day).toFixed(2)} ${yForVal(p.value).toFixed(2)}`).join(" L ")
   );
-}
-
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 function BudgetCardHeaderActions({
@@ -723,7 +605,12 @@ function BudgetRing({
     icon: string | null;
     target: number;
     spent: number;
+    /** Target + rollover carried in − spent, as the budget snapshot reports it. */
+    remaining: number;
     pct: number;
+    status: PaceStatus;
+    /** Set while a once-a-month category's due day is still ahead. */
+    dueDay: number | null;
   };
   currency: string;
   activityRange: { from: string; to: string };
@@ -731,10 +618,13 @@ function BudgetRing({
   const formatting = useAmountFormatting();
   const { t } = useTranslation();
   const { isBalanceHidden } = useBalancePrivacy();
-  const isOver = ring.spent > ring.target;
-  const remaining = ring.target - ring.spent;
-  const ringColor = isOver ? "var(--destructive)" : ring.pct > 0.85 ? "#C28B47" : "var(--success)";
-  const displayAmount = Math.abs(isOver ? ring.spent - ring.target : remaining);
+  const isOver = ring.status === "over";
+  const ringColor = isOver
+    ? "var(--destructive)"
+    : ring.status === "approaching"
+      ? "#C28B47"
+      : "var(--success)";
+  const displayAmount = Math.abs(ring.remaining);
 
   const size = 56;
   const stroke = 4;
@@ -789,7 +679,11 @@ function BudgetRing({
           isOver ? "text-destructive" : "text-muted-foreground/70",
         )}
       >
-        {isOver ? t("spending:budgetChart.overLower") : t("spending:budgetChart.leftLower")}
+        {isOver
+          ? t("spending:budgetChart.overLower")
+          : ring.dueDay !== null
+            ? t("spending:budgetChart.dueOn", { day: ring.dueDay })
+            : t("spending:budgetChart.leftLower")}
       </div>
     </Link>
   );

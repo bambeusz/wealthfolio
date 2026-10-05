@@ -813,6 +813,7 @@
     "byCategory": "Por categoria",
     "previousBudgetMonth": "Mês de orçamento anterior",
     "nextBudgetMonth": "Próximo mês de orçamento",
+    "dueOn": "vence dia {{day}}",
     "manage": "Gerenciar →"
   },
   "cashForm": {
@@ -960,6 +961,14 @@
     "plusMore_many": "+ {{count}} mais"
   },
   "budgetEditor": {
+    "pacingLabel": "Ritmo de {{name}}",
+    "pacingTitle": "Quando isso é gasto?",
+    "pacingLinear": "Distribuir uniformemente",
+    "pacingLinearHint": "Gasto aos poucos ao longo do mês.",
+    "pacingMonthlyOnDay": "Vence no dia",
+    "pacingMonthlyOnDayHint": "Pago uma vez por mês. No ritmo até esse dia; um dia após o fim do mês cai no último dia.",
+    "pacingDueDay": "Dia de vencimento",
+    "pacingInvalidDay": "Informe um dia de 1 a 31.",
     "newGroup": "Novo grupo",
     "addGroup": "Adicionar grupo",
     "resetDefaults": "Restaurar valores padrão",

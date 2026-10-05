@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::budget::BudgetGroup;
+use crate::budget::{BudgetGroup, PaceStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,21 +81,32 @@ pub enum HealthStatus {
     CashflowNegative,
 }
 
+/// The window's pace, computed by the shared budget pacing rule
+/// (`budget::pacing`), so it agrees with the budget card for the same month.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaceState {
-    /// Trailing-7-day average spend per day.
+    /// Trailing-7-day average of flexible spend per day (fixed, once-a-month
+    /// categories excluded so a rent payment doesn't inflate it).
     pub daily_avg: f64,
     /// Number of days elapsed within the window (clamped to window length).
     pub days_elapsed: i64,
     /// Number of days remaining in the window (0 if `end <= now`).
     pub days_remaining: i64,
-    /// Pace-implied projection for the full window:
-    ///   spent_to_date + (daily_avg × days_remaining).
-    /// For closed windows, equals `spent_to_date`.
+    /// Projection for the full window: Σ fixed max(spent, budget) + flexible
+    /// spent + `daily_avg × days_remaining`. For closed windows, equals spent.
     pub projected_spend: f64,
-    /// Expected pace at this point in the window: `budget × (days_elapsed / total_days)`.
+    /// Expected spend by today: fixed budgets whose due day has passed +
+    /// flexible budget along the pace curve.
     pub expected_spend_to_date: f64,
+    #[serde(default)]
+    pub fixed_expected_to_date: f64,
+    #[serde(default)]
+    pub flexible_expected_to_date: f64,
+    /// Whether the projection may flag `Approaching` (live, ≥ 7 days in).
+    #[serde(default)]
+    pub projection_reliable: bool,
+    pub status: PaceStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

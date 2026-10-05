@@ -13,10 +13,14 @@ use wealthfolio_core::activities::ActivityRepositoryTrait;
 use wealthfolio_core::taxonomies::{Category, TaxonomyServiceTrait};
 
 use super::model::{
-    BudgetCategoryRow, BudgetGroup, BudgetGroupRow, BudgetRolloverSetting,
+    BudgetCategoryRow, BudgetGroup, BudgetGroupRow, BudgetPacing, BudgetRolloverSetting,
     BudgetRolloverTargetType, BudgetSnapshot, BudgetSnapshotComputed, BudgetSnapshotState,
-    BudgetTarget, BudgetTargetType, BudgetTotals, NewBudgetGroup, NewBudgetGroupAssignment,
-    NewBudgetRolloverSetting, NewBudgetTarget, UpdateBudgetGroup,
+    BudgetTarget, BudgetTargetInput, BudgetTargetType, BudgetTotals, NewBudgetGroup,
+    NewBudgetGroupAssignment, NewBudgetRolloverSetting, NewBudgetTarget, UpdateBudgetGroup,
+};
+use super::pacing::{
+    category_pace, historical_curve, history_from_daily, history_months, window_pace, BudgetPace,
+    FixedLine, PaceClock, PaceCurve, PacingRule, WindowPaceInput,
 };
 use super::traits::BudgetRepositoryTrait;
 use crate::activity_allocations::{group_assignments, group_splits, SplitsByActivity};
@@ -35,6 +39,10 @@ const INCOME_TAXONOMY: &str = "income_sources";
 const SAVINGS_TAXONOMY: &str = "savings_categories";
 const DEFAULT_PERIOD_KEY: &str = "default";
 const OTHER_GROUP_KEY: &str = "other";
+/// The system "Savings" group holds money moved out, not consumption; the
+/// month pace leaves it out, exactly like the insight headline budget, so
+/// both report the same status for a month.
+const SAVINGS_GROUP_KEY: &str = "savings";
 
 #[derive(Clone, Copy)]
 struct DefaultGroup {
@@ -190,6 +198,16 @@ const DEFAULT_ASSIGNMENTS: [DefaultAssignment; 15] = [
 
 type MonthActuals = HashMap<(String, String), Decimal>;
 
+/// Spending (FX-converted) on one user-local day for one top-level spending
+/// category; `None` is uncategorized spend.
+type DailySpend = (NaiveDate, Option<String>, Decimal);
+
+#[derive(Default)]
+struct BudgetActuals {
+    by_month: HashMap<String, MonthActuals>,
+    daily_spending: Vec<DailySpend>,
+}
+
 pub struct BudgetService {
     repo: Arc<dyn BudgetRepositoryTrait>,
     activity_repo: Arc<dyn ActivityRepositoryTrait>,
@@ -259,15 +277,21 @@ impl BudgetService {
         let top_income_categories = top_level_categories(&income_categories);
 
         let is_month_view = period_key != DEFAULT_PERIOD_KEY;
-        let actuals_by_month = if is_month_view {
-            let earliest_rollover_month = rollover_settings
+        let actuals = if is_month_view {
+            // Load back to the earliest of the rollover chain start and the
+            // pace history window.
+            let (year, month) = parse_month(&period_key)?;
+            let (history_year, history_month) = history_months(year, month)[0];
+            let history_start = format!("{history_year:04}-{history_month:02}");
+            let start_month = rollover_settings
                 .iter()
                 .filter(|s| s.enabled && s.start_month <= period_key)
                 .map(|s| s.start_month.clone())
+                .chain(std::iter::once(history_start))
                 .min()
                 .unwrap_or_else(|| period_key.clone());
-            self.actuals_by_month(
-                &earliest_rollover_month,
+            self.load_actuals(
+                &start_month,
                 &period_key,
                 &spending_category_meta,
                 &income_meta,
@@ -276,8 +300,9 @@ impl BudgetService {
             )
             .await?
         } else {
-            HashMap::new()
+            BudgetActuals::default()
         };
+        let actuals_by_month = &actuals.by_month;
         let current_actuals = actuals_by_month
             .get(&period_key)
             .cloned()
@@ -304,6 +329,39 @@ impl BudgetService {
                 &spending_category_meta,
                 &other_group_id,
             )
+        };
+
+        // Pacing inputs for a month view. A category is "fixed" (paced as a
+        // step on its due day) only inside a counted group; everything else is
+        // flexible spend that feeds the run rate and the historical curve.
+        let savings_group_id = group_by_key.get(SAVINGS_GROUP_KEY).map(|g| g.id.clone());
+        let fixed_category_ids: HashSet<String> = top_spending_categories
+            .iter()
+            .filter(|c| savings_group_id.as_deref() != Some(group_for_category(&c.id).as_str()))
+            .filter(|c| {
+                target_index
+                    .effective_category_rule(&period_key, SPENDING_TAXONOMY, &c.id)
+                    .is_fixed()
+            })
+            .map(|c| c.id.clone())
+            .collect();
+        let month_pace_inputs = if is_month_view {
+            let (year, month) = parse_month(&period_key)?;
+            let today = wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(
+                Utc::now(),
+                timezone,
+            );
+            let clock = PaceClock::for_month(year, month, today)
+                .ok_or_else(|| invalid_budget_input("Invalid budget period key"))?;
+            Some(MonthPaceInputs::build(
+                &actuals.daily_spending,
+                year,
+                month,
+                clock,
+                |category_id| fixed_category_ids.contains(category_id),
+            ))
+        } else {
+            None
         };
 
         let mut rows_by_group: HashMap<String, Vec<BudgetCategoryRow>> = HashMap::new();
@@ -345,6 +403,26 @@ impl BudgetService {
             } else {
                 (Decimal::ZERO, Decimal::ZERO, target - actual)
             };
+            let (pacing, due_day) = target_index.effective_category_pacing(
+                &period_key,
+                SPENDING_TAXONOMY,
+                &category.id,
+            );
+            let line_pace = month_pace_inputs.as_ref().map(|inputs| {
+                category_pace(
+                    target_index.effective_category_rule(
+                        &period_key,
+                        SPENDING_TAXONOMY,
+                        &category.id,
+                    ),
+                    decimal_to_f64(target),
+                    decimal_to_f64(rollover_in),
+                    decimal_to_f64(actual),
+                    inputs.category_daily(&category.id),
+                    inputs.clock,
+                    &inputs.curve,
+                )
+            });
             rows_by_group
                 .entry(group_id.clone())
                 .or_default()
@@ -370,6 +448,11 @@ impl BudgetService {
                         &category.id,
                     ),
                     rollover_enabled: rollover.is_some(),
+                    pacing,
+                    due_day,
+                    expected_to_date: line_pace.map(|p| p.expected_to_date),
+                    projected: line_pace.map(|p| p.projected),
+                    pace_status: line_pace.map(|p| p.status),
                 });
         }
 
@@ -492,6 +575,8 @@ impl BudgetService {
                 .unwrap_or(Decimal::ZERO);
             let target =
                 target_index.effective_category_decimal(&period_key, INCOME_TAXONOMY, &category.id);
+            let (pacing, due_day) =
+                target_index.effective_category_pacing(&period_key, INCOME_TAXONOMY, &category.id);
             income_planned_total += target;
             income_actual_total += actual;
             income_rows.push(BudgetCategoryRow {
@@ -516,9 +601,38 @@ impl BudgetService {
                     &category.id,
                 ),
                 rollover_enabled: false,
+                pacing,
+                due_day,
+                expected_to_date: None,
+                projected: None,
+                pace_status: None,
             });
         }
         income_rows.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let pace = month_pace_inputs.as_ref().map(|inputs| {
+            let counted_groups = group_rows
+                .iter()
+                .filter(|row| Some(row.group.id.as_str()) != savings_group_id.as_deref());
+            let available = counted_groups.clone().map(|row| row.planned_total).sum();
+            let fixed_lines: Vec<FixedLine> = counted_groups
+                .flat_map(|row| &row.categories)
+                .filter(|row| fixed_category_ids.contains(&row.category_id))
+                .map(|row| {
+                    FixedLine::for_month(
+                        target_index.effective_category_rule(
+                            &period_key,
+                            SPENDING_TAXONOMY,
+                            &row.category_id,
+                        ),
+                        row.target,
+                        row.actual,
+                        inputs.clock.total_days,
+                    )
+                })
+                .collect();
+            inputs.window_pace(available, &fixed_lines)
+        });
 
         let totals = BudgetTotals {
             spending_planned: decimal_to_f64(spending_planned_total),
@@ -559,6 +673,7 @@ impl BudgetService {
                 ungrouped_rows: vec![],
                 income_rows,
                 totals,
+                pace,
             },
         })
     }
@@ -700,8 +815,75 @@ impl BudgetService {
     ) -> Result<BudgetSnapshot> {
         validate_period_key(&target.period_key)?;
         validate_budget_target(&target)?;
-        self.repo.upsert_target(target).await?;
+        let existing = self.repo.list_targets().await?;
+        self.repo
+            .upsert_target(resolve_target_pacing(target, &existing))
+            .await?;
         self.get(period_key, currency, timezone).await
+    }
+
+    /// Upserts many targets of one period in a single transaction, keyed like
+    /// `upsert_target`, and returns every target stored for that period.
+    /// Writing a month that already holds these values is a no-op change.
+    pub async fn set_targets(
+        &self,
+        period_key: &str,
+        inputs: Vec<BudgetTargetInput>,
+    ) -> Result<Vec<BudgetTarget>> {
+        validate_period_key(period_key)?;
+        let existing = self.repo.list_targets().await?;
+        let mut seen = HashSet::new();
+        let mut resolved = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let target = target_from_input(period_key, input);
+            validate_budget_target(&target)?;
+            let key = (
+                target.target_type.as_str(),
+                target.taxonomy_id.clone(),
+                target.category_id.clone(),
+                target.group_id.clone(),
+            );
+            if !seen.insert(key) {
+                return Err(invalid_budget_input(
+                    "Each category or group may appear only once per call",
+                ));
+            }
+            resolved.push(resolve_target_pacing(target, &existing));
+        }
+        if !resolved.is_empty() {
+            self.repo.upsert_targets(resolved).await?;
+        }
+        Ok(self
+            .repo
+            .list_targets()
+            .await?
+            .into_iter()
+            .filter(|t| t.period_key == period_key)
+            .collect())
+    }
+
+    /// Deletes targets of one period. Every id must belong to `period_key`, so
+    /// a caller can't remove another month's (or the default's) targets by
+    /// mistake; nothing is deleted when one doesn't.
+    pub async fn delete_targets(&self, period_key: &str, ids: Vec<String>) -> Result<()> {
+        validate_period_key(period_key)?;
+        let in_period: HashSet<String> = self
+            .repo
+            .list_targets()
+            .await?
+            .into_iter()
+            .filter(|t| t.period_key == period_key)
+            .map(|t| t.id)
+            .collect();
+        if let Some(missing) = ids.iter().find(|id| !in_period.contains(*id)) {
+            return Err(invalid_budget_input(&format!(
+                "Budget target {missing} not found in period {period_key}"
+            )));
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.repo.delete_targets(ids).await
     }
 
     pub async fn delete_target(
@@ -883,7 +1065,9 @@ impl BudgetService {
     /// `timezone` (IANA name, may be empty) drives per-month bucketing so a
     /// midnight-local activity on the first/last day of a month lands in the
     /// month the user perceives, not the UTC month.
-    async fn actuals_by_month(
+    /// Besides per-month totals it keeps per-day spending, which feeds the
+    /// pace (run rate, spent curve, historical curve).
+    async fn load_actuals(
         &self,
         start_period: &str,
         end_period: &str,
@@ -891,10 +1075,10 @@ impl BudgetService {
         income_meta: &HashMap<String, Category>,
         currency: &str,
         timezone: &str,
-    ) -> Result<HashMap<String, MonthActuals>> {
+    ) -> Result<BudgetActuals> {
         let settings = self.spending_settings.get().await?;
         if !settings.enabled || settings.account_ids.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(BudgetActuals::default());
         }
         let accounts = self
             .account_repo
@@ -906,7 +1090,7 @@ impl BudgetService {
             .map(|a| (a.id, a.account_type))
             .collect();
         if account_types.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(BudgetActuals::default());
         }
         let account_ids = account_types.keys().cloned().collect::<Vec<_>>();
         let (start, _) = local_month_bounds_utc(start_period, timezone)?;
@@ -937,11 +1121,14 @@ impl BudgetService {
         let no_exclusions = ExclusionIndex::empty();
         let activity_exclusions =
             ActivityExclusionIndex::new(self.activity_exclusions.list_all().await?);
-        let mut actuals: HashMap<String, MonthActuals> = HashMap::new();
+        let mut actuals = BudgetActuals::default();
         for activity in activities {
             let Some(account_type) = account_types.get(&activity.account_id) else {
                 continue;
             };
+            // The one classifier call for budget actuals, the pace's daily
+            // spend and its historical curve; an activity excluded from
+            // Spending counts in none of them.
             let classification =
                 classify_plain_for_totals(&activity, account_type, &activity_exclusions);
             let amount = activity_abs_amount(&activity);
@@ -950,13 +1137,16 @@ impl BudgetService {
             if spending_native == Decimal::ZERO && income_native == Decimal::ZERO {
                 continue;
             }
-            // Bucket by user-local month so a midnight-local activity on
+            // Bucket by user-local day/month so a midnight-local activity on
             // month boundaries lands in the month the user perceives,
             // mirroring insight::compute_by_month.
-            let month = period_key_for_date_in_tz(activity.activity_date, timezone);
-            let month_actuals = actuals.entry(month).or_default();
-            add_allocated_actuals(
-                month_actuals,
+            let date = wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(
+                activity.activity_date,
+                timezone,
+            );
+            let month = format!("{:04}-{:02}", date.year(), date.month());
+            let month_actuals = actuals.by_month.entry(month).or_default();
+            for (top_id, amount) in allocated_actuals(
                 &activity.id,
                 SPENDING_TAXONOMY,
                 spending_native,
@@ -968,9 +1158,15 @@ impl BudgetService {
                 &activity.currency,
                 currency,
                 fx_as_of,
-            );
-            add_allocated_actuals(
-                month_actuals,
+            ) {
+                if let Some(top_id) = &top_id {
+                    *month_actuals
+                        .entry((SPENDING_TAXONOMY.to_string(), top_id.clone()))
+                        .or_insert(Decimal::ZERO) += amount;
+                }
+                actuals.daily_spending.push((date, top_id, amount));
+            }
+            for (top_id, amount) in allocated_actuals(
                 &activity.id,
                 INCOME_TAXONOMY,
                 income_native,
@@ -982,15 +1178,24 @@ impl BudgetService {
                 &activity.currency,
                 currency,
                 fx_as_of,
-            );
+            ) {
+                if let Some(top_id) = top_id {
+                    *month_actuals
+                        .entry((INCOME_TAXONOMY.to_string(), top_id))
+                        .or_insert(Decimal::ZERO) += amount;
+                }
+            }
         }
         Ok(actuals)
     }
 }
 
+/// An activity's bucket amount split across top-level categories and
+/// converted to `target_currency`. A `None` category is the unassigned
+/// remainder (uncategorized spend), which counts toward the month's spending
+/// but toward no category row.
 #[allow(clippy::too_many_arguments)]
-fn add_allocated_actuals(
-    month_actuals: &mut MonthActuals,
+fn allocated_actuals(
     activity_id: &str,
     taxonomy_id: &str,
     amount: Decimal,
@@ -1002,10 +1207,13 @@ fn add_allocated_actuals(
     from_currency: &str,
     target_currency: &str,
     fx_as_of: NaiveDate,
-) {
+) -> Vec<(Option<String>, Decimal)> {
+    if amount == Decimal::ZERO {
+        return Vec::new();
+    }
     // Filter before the top_category_id rollup — an excluded subcategory must
     // not roll its spend into an included parent.
-    let (allocations, _excluded_native) = split_spending_allocations(
+    let (allocations, excluded_native) = split_spending_allocations(
         activity_id,
         taxonomy_id,
         amount,
@@ -1013,22 +1221,121 @@ fn add_allocated_actuals(
         splits_by_activity,
         exclusions,
     );
-    for allocation in allocations {
-        let amount = crate::fx::convert(
-            fx,
-            allocation.amount,
-            from_currency,
-            target_currency,
-            fx_as_of,
-        )
-        .unwrap_or(Decimal::ZERO);
-        if amount == Decimal::ZERO {
-            continue;
+    let convert = |native: Decimal| {
+        crate::fx::convert(fx, native, from_currency, target_currency, fx_as_of)
+            .unwrap_or(Decimal::ZERO)
+    };
+    if allocations.is_empty() {
+        // Unassigned (never excluded) spend; a fully-excluded activity also
+        // lands here and contributes nothing.
+        let converted = convert(amount);
+        return if excluded_native == Decimal::ZERO && converted != Decimal::ZERO {
+            vec![(None, converted)]
+        } else {
+            Vec::new()
+        };
+    }
+    allocations
+        .into_iter()
+        .filter_map(|allocation| {
+            let converted = convert(allocation.amount);
+            (converted != Decimal::ZERO).then(|| {
+                (
+                    Some(top_category_id(&allocation.category_id, meta)),
+                    converted,
+                )
+            })
+        })
+        .collect()
+}
+
+/// Per-day spending for one budget month, cut to the elapsed days, plus the
+/// historical curve of the months before it — everything the pace needs
+/// besides the targets.
+struct MonthPaceInputs {
+    clock: PaceClock,
+    curve: PaceCurve,
+    by_category: HashMap<String, Vec<f64>>,
+    flexible_daily: Vec<f64>,
+    spent_daily: Vec<f64>,
+    spent: f64,
+}
+
+impl MonthPaceInputs {
+    fn build(
+        daily_spending: &[DailySpend],
+        year: i32,
+        month: u32,
+        clock: PaceClock,
+        is_fixed: impl Fn(&str) -> bool,
+    ) -> Self {
+        let elapsed = clock.elapsed_days as usize;
+        let is_flexible = |category: &Option<String>| match category {
+            Some(id) => !is_fixed(id),
+            None => true,
+        };
+        let mut by_category: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut flexible_daily = vec![0.0; elapsed];
+        let mut spent_daily = vec![0.0; elapsed];
+        let mut spent = 0.0;
+        for (date, category, amount) in daily_spending {
+            if date.year() != year || date.month() != month {
+                continue;
+            }
+            let amount = decimal_to_f64(*amount);
+            spent += amount;
+            let index = date.day() as usize - 1;
+            if index >= elapsed {
+                continue;
+            }
+            spent_daily[index] += amount;
+            if is_flexible(category) {
+                flexible_daily[index] += amount;
+            }
+            if let Some(id) = category {
+                by_category
+                    .entry(id.clone())
+                    .or_insert_with(|| vec![0.0; elapsed])[index] += amount;
+            }
         }
-        let top_id = top_category_id(&allocation.category_id, meta);
-        *month_actuals
-            .entry((taxonomy_id.to_string(), top_id))
-            .or_insert(Decimal::ZERO) += amount;
+
+        let months = history_months(year, month);
+        let history = history_from_daily(
+            &months,
+            daily_spending
+                .iter()
+                .filter(|(_, category, _)| is_flexible(category))
+                .map(|(date, _, amount)| (*date, decimal_to_f64(*amount))),
+        );
+        let curve = historical_curve(&history, clock.total_days)
+            .unwrap_or_else(|| PaceCurve::linear(clock.total_days));
+        Self {
+            clock,
+            curve,
+            by_category,
+            flexible_daily,
+            spent_daily,
+            spent,
+        }
+    }
+
+    fn category_daily(&self, category_id: &str) -> &[f64] {
+        self.by_category
+            .get(category_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn window_pace(&self, available: f64, fixed: &[FixedLine]) -> BudgetPace {
+        window_pace(WindowPaceInput {
+            clock: self.clock,
+            available,
+            spent: self.spent,
+            fixed,
+            flexible_daily: &self.flexible_daily,
+            spent_daily: &self.spent_daily,
+            curve: Some(&self.curve),
+        })
     }
 }
 
@@ -1078,15 +1385,45 @@ impl<'a> TargetIndex<'a> {
         self.month_group_buffer(period, group_id).is_some()
     }
 
+    /// Pacing is resolved like the amount: month override → default → linear.
+    pub(crate) fn effective_category_rule(
+        &self,
+        period: &str,
+        taxonomy_id: &str,
+        category_id: &str,
+    ) -> PacingRule {
+        let (pacing, due_day) = self.effective_category_pacing(period, taxonomy_id, category_id);
+        PacingRule::new(pacing, due_day)
+    }
+
+    pub(crate) fn effective_category_pacing(
+        &self,
+        period: &str,
+        taxonomy_id: &str,
+        category_id: &str,
+    ) -> (BudgetPacing, Option<i32>) {
+        self.category_target(period, taxonomy_id, category_id)
+            .or_else(|| self.category_target(DEFAULT_PERIOD_KEY, taxonomy_id, category_id))
+            .map(|t| (t.pacing, t.due_day))
+            .unwrap_or((BudgetPacing::Linear, None))
+    }
+
+    fn category_target(
+        &self,
+        period: &str,
+        taxonomy_id: &str,
+        category_id: &str,
+    ) -> Option<&'a BudgetTarget> {
+        self.targets.iter().find(|t| {
+            matches!(t.target_type, BudgetTargetType::Category)
+                && t.period_key == period
+                && t.taxonomy_id.as_deref() == Some(taxonomy_id)
+                && t.category_id.as_deref() == Some(category_id)
+        })
+    }
+
     fn month_category(&self, period: &str, taxonomy_id: &str, category_id: &str) -> Option<&str> {
-        self.targets
-            .iter()
-            .find(|t| {
-                matches!(t.target_type, BudgetTargetType::Category)
-                    && t.period_key == period
-                    && t.taxonomy_id.as_deref() == Some(taxonomy_id)
-                    && t.category_id.as_deref() == Some(category_id)
-            })
+        self.category_target(period, taxonomy_id, category_id)
             .map(|t| t.amount.as_str())
     }
 
@@ -1322,9 +1659,75 @@ fn validate_budget_target(target: &NewBudgetTarget) -> Result<()> {
                     "Group buffer target requires groupId only",
                 ));
             }
+            // A buffer has no due day: it is slack spread over the month.
+            if matches!(target.pacing, Some(BudgetPacing::MonthlyOnDay)) || target.due_day.is_some()
+            {
+                return Err(invalid_budget_input(
+                    "Group buffer targets are paced linearly",
+                ));
+            }
         }
     }
-    Ok(())
+    match (target.pacing, target.due_day) {
+        (Some(BudgetPacing::MonthlyOnDay), Some(day)) if (1..=31).contains(&day) => Ok(()),
+        (Some(BudgetPacing::MonthlyOnDay), Some(_)) => {
+            Err(invalid_budget_input("Due day must be between 1 and 31"))
+        }
+        (Some(BudgetPacing::MonthlyOnDay), None) => Err(invalid_budget_input(
+            "Once-a-month pacing requires a due day",
+        )),
+        (Some(BudgetPacing::Linear), Some(_)) => Err(invalid_budget_input(
+            "A due day only applies to once-a-month pacing",
+        )),
+        (None, Some(_)) => Err(invalid_budget_input("A due day requires a pacing")),
+        (_, None) => Ok(()),
+    }
+}
+
+/// Fills in the pacing of a target written without one: the stored row keeps
+/// its pacing, and a new month override inherits the category default's, so
+/// changing a month's amount never silently turns "due on the 1st" linear.
+fn resolve_target_pacing(
+    mut target: NewBudgetTarget,
+    existing: &[BudgetTarget],
+) -> NewBudgetTarget {
+    if let Some(pacing) = target.pacing {
+        if pacing == BudgetPacing::Linear {
+            target.due_day = None;
+        }
+        return target;
+    }
+    let (pacing, due_day) = match target.target_type {
+        BudgetTargetType::GroupBuffer => (BudgetPacing::Linear, None),
+        BudgetTargetType::Category => TargetIndex::new(existing).effective_category_pacing(
+            &target.period_key,
+            target.taxonomy_id.as_deref().unwrap_or_default(),
+            target.category_id.as_deref().unwrap_or_default(),
+        ),
+    };
+    target.pacing = Some(pacing);
+    target.due_day = due_day;
+    target
+}
+
+fn target_from_input(period_key: &str, input: BudgetTargetInput) -> NewBudgetTarget {
+    let taxonomy_id = match input.target_type {
+        BudgetTargetType::Category => input
+            .taxonomy_id
+            .or_else(|| Some(SPENDING_TAXONOMY.to_string())),
+        BudgetTargetType::GroupBuffer => input.taxonomy_id,
+    };
+    NewBudgetTarget {
+        id: None,
+        period_key: period_key.to_string(),
+        target_type: input.target_type,
+        taxonomy_id,
+        category_id: input.category_id,
+        group_id: input.group_id,
+        amount: input.amount,
+        pacing: input.pacing,
+        due_day: input.due_day,
+    }
 }
 
 fn validate_rollover_setting(setting: &NewBudgetRolloverSetting) -> Result<()> {
@@ -1564,9 +1967,259 @@ mod tests {
             category_id: category_id.map(str::to_string),
             group_id: group_id.map(str::to_string),
             amount: amount.to_string(),
+            pacing: BudgetPacing::Linear,
+            due_day: None,
             created_at: ts(),
             updated_at: ts(),
         }
+    }
+
+    fn category_target(period_key: &str, amount: &str, due_day: Option<i32>) -> BudgetTarget {
+        let mut row = target(
+            period_key,
+            BudgetTargetType::Category,
+            Some(SPENDING_TAXONOMY),
+            Some("cat_housing"),
+            None,
+            amount,
+        );
+        if due_day.is_some() {
+            row.pacing = BudgetPacing::MonthlyOnDay;
+            row.due_day = due_day;
+        }
+        row
+    }
+
+    fn new_category_target(
+        period_key: &str,
+        pacing: Option<BudgetPacing>,
+        due_day: Option<i32>,
+    ) -> NewBudgetTarget {
+        NewBudgetTarget {
+            id: None,
+            period_key: period_key.to_string(),
+            target_type: BudgetTargetType::Category,
+            taxonomy_id: Some(SPENDING_TAXONOMY.to_string()),
+            category_id: Some("cat_housing".to_string()),
+            group_id: None,
+            amount: "1200".to_string(),
+            pacing,
+            due_day,
+        }
+    }
+
+    fn new_buffer_target(pacing: Option<BudgetPacing>, due_day: Option<i32>) -> NewBudgetTarget {
+        NewBudgetTarget {
+            id: None,
+            period_key: DEFAULT_PERIOD_KEY.to_string(),
+            target_type: BudgetTargetType::GroupBuffer,
+            taxonomy_id: None,
+            category_id: None,
+            group_id: Some(BUDGET_GROUP_NEEDS_ID.to_string()),
+            amount: "50".to_string(),
+            pacing,
+            due_day,
+        }
+    }
+
+    #[test]
+    fn validates_pacing_combinations() {
+        use BudgetPacing::{Linear, MonthlyOnDay};
+        let cases = [
+            (new_category_target("default", None, None), true),
+            (new_category_target("default", Some(Linear), None), true),
+            (
+                new_category_target("default", Some(MonthlyOnDay), Some(1)),
+                true,
+            ),
+            (
+                new_category_target("2026-10", Some(MonthlyOnDay), Some(31)),
+                true,
+            ),
+            (
+                new_category_target("default", Some(MonthlyOnDay), None),
+                false,
+            ),
+            (
+                new_category_target("default", Some(MonthlyOnDay), Some(0)),
+                false,
+            ),
+            (
+                new_category_target("default", Some(MonthlyOnDay), Some(32)),
+                false,
+            ),
+            (new_category_target("default", Some(Linear), Some(5)), false),
+            (new_category_target("default", None, Some(5)), false),
+            (new_buffer_target(None, None), true),
+            (new_buffer_target(Some(Linear), None), true),
+            (new_buffer_target(Some(MonthlyOnDay), Some(5)), false),
+            (new_buffer_target(None, Some(5)), false),
+        ];
+        for (target, ok) in cases {
+            assert_eq!(
+                validate_budget_target(&target).is_ok(),
+                ok,
+                "{:?} {:?} {:?}",
+                target.target_type,
+                target.pacing,
+                target.due_day
+            );
+        }
+    }
+
+    #[test]
+    fn month_override_without_pacing_inherits_the_default() {
+        let existing = vec![category_target(DEFAULT_PERIOD_KEY, "1200", Some(3))];
+        let resolved = resolve_target_pacing(new_category_target("2026-10", None, None), &existing);
+        assert_eq!(resolved.pacing, Some(BudgetPacing::MonthlyOnDay));
+        assert_eq!(resolved.due_day, Some(3));
+    }
+
+    #[test]
+    fn rewriting_a_row_without_pacing_keeps_its_pacing() {
+        // The default is linear but this month's override is due on the 5th.
+        let existing = vec![
+            category_target(DEFAULT_PERIOD_KEY, "1200", None),
+            category_target("2026-10", "1300", Some(5)),
+        ];
+        let resolved = resolve_target_pacing(new_category_target("2026-10", None, None), &existing);
+        assert_eq!(resolved.pacing, Some(BudgetPacing::MonthlyOnDay));
+        assert_eq!(resolved.due_day, Some(5));
+    }
+
+    #[test]
+    fn explicit_pacing_wins_and_linear_clears_the_due_day() {
+        let existing = vec![category_target(DEFAULT_PERIOD_KEY, "1200", Some(3))];
+        let resolved = resolve_target_pacing(
+            new_category_target("2026-10", Some(BudgetPacing::Linear), None),
+            &existing,
+        );
+        assert_eq!(resolved.pacing, Some(BudgetPacing::Linear));
+        assert_eq!(resolved.due_day, None);
+        let resolved = resolve_target_pacing(new_category_target("default", None, None), &[]);
+        assert_eq!(resolved.pacing, Some(BudgetPacing::Linear));
+        let resolved = resolve_target_pacing(new_buffer_target(None, None), &existing);
+        assert_eq!(resolved.pacing, Some(BudgetPacing::Linear));
+    }
+
+    #[test]
+    fn effective_pacing_resolves_override_then_default_then_linear() {
+        let targets = vec![
+            category_target(DEFAULT_PERIOD_KEY, "1200", Some(1)),
+            category_target("2026-11", "1200", None),
+        ];
+        let index = TargetIndex::new(&targets);
+        assert_eq!(
+            index.effective_category_rule("2026-10", SPENDING_TAXONOMY, "cat_housing"),
+            PacingRule::new(BudgetPacing::MonthlyOnDay, Some(1))
+        );
+        assert_eq!(
+            index.effective_category_rule("2026-11", SPENDING_TAXONOMY, "cat_housing"),
+            PacingRule::LINEAR
+        );
+        assert_eq!(
+            index.effective_category_rule("2026-10", SPENDING_TAXONOMY, "cat_food"),
+            PacingRule::LINEAR
+        );
+    }
+
+    #[test]
+    fn bulk_input_defaults_category_taxonomy() {
+        let input = BudgetTargetInput {
+            target_type: BudgetTargetType::Category,
+            taxonomy_id: None,
+            category_id: Some("cat_housing".to_string()),
+            group_id: None,
+            amount: "1200".to_string(),
+            pacing: Some(BudgetPacing::MonthlyOnDay),
+            due_day: Some(1),
+        };
+        let target = target_from_input("2026-10", input);
+        assert_eq!(target.period_key, "2026-10");
+        assert_eq!(target.taxonomy_id.as_deref(), Some(SPENDING_TAXONOMY));
+        assert!(validate_budget_target(&target).is_ok());
+        let buffer = target_from_input(
+            "2026-10",
+            BudgetTargetInput {
+                target_type: BudgetTargetType::GroupBuffer,
+                taxonomy_id: None,
+                category_id: None,
+                group_id: Some(BUDGET_GROUP_NEEDS_ID.to_string()),
+                amount: "50".to_string(),
+                pacing: None,
+                due_day: None,
+            },
+        );
+        assert_eq!(buffer.taxonomy_id, None);
+        assert!(validate_budget_target(&buffer).is_ok());
+    }
+
+    #[test]
+    fn month_pace_inputs_split_fixed_from_flexible_spend() {
+        let d = |m: u32, day: u32| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
+        let daily: Vec<DailySpend> = vec![
+            // Current month (October), day 5 of 31.
+            (
+                d(10, 1),
+                Some("cat_housing".to_string()),
+                Decimal::new(1200, 0),
+            ),
+            (
+                d(10, 2),
+                Some("cat_groceries".to_string()),
+                Decimal::new(40, 0),
+            ),
+            (d(10, 4), None, Decimal::new(10, 0)),
+            // Future-dated: counts toward spent, not toward the curves.
+            (
+                d(10, 20),
+                Some("cat_groceries".to_string()),
+                Decimal::new(5, 0),
+            ),
+            // History: rent is left out of the curve.
+            (
+                d(7, 1),
+                Some("cat_housing".to_string()),
+                Decimal::new(1200, 0),
+            ),
+            (
+                d(7, 31),
+                Some("cat_groceries".to_string()),
+                Decimal::new(100, 0),
+            ),
+            (
+                d(8, 31),
+                Some("cat_groceries".to_string()),
+                Decimal::new(100, 0),
+            ),
+        ];
+        let clock = PaceClock::for_month(2026, 10, d(10, 5)).unwrap();
+        let inputs = MonthPaceInputs::build(&daily, 2026, 10, clock, |id| id == "cat_housing");
+        assert_eq!(inputs.spent_daily, vec![1200.0, 40.0, 0.0, 10.0, 0.0]);
+        assert_eq!(inputs.flexible_daily, vec![0.0, 40.0, 0.0, 10.0, 0.0]);
+        assert_eq!(inputs.spent, 1255.0);
+        assert_eq!(inputs.category_daily("cat_housing")[0], 1200.0);
+        assert!(inputs.category_daily("cat_travel").is_empty());
+        // Two history months spent everything on their last day.
+        assert_eq!(
+            inputs.curve.source(),
+            crate::budget::pacing::PaceCurveSource::History
+        );
+        assert_eq!(inputs.curve.fraction(30), 0.0);
+        assert_eq!(inputs.curve.fraction(31), 1.0);
+
+        // Rent due on the 1st is paid; groceries are under a 600 budget.
+        let fixed = vec![FixedLine::for_month(
+            PacingRule::new(BudgetPacing::MonthlyOnDay, Some(1)),
+            1200.0,
+            1200.0,
+            31,
+        )];
+        let pace = inputs.window_pace(1800.0, &fixed);
+        assert_eq!(pace.fixed_expected_to_date, 1200.0);
+        // With all past spending on the last day, nothing flexible is
+        // expected yet, so groceries are ahead of the historical pace.
+        assert_eq!(pace.status, crate::budget::pacing::PaceStatus::Approaching);
     }
 
     fn rollover_setting(start_month: &str, starting_balance: &str) -> BudgetRolloverSetting {
@@ -1625,9 +2278,7 @@ mod tests {
         );
         let splits = SplitsByActivity::new();
 
-        let mut month_actuals = MonthActuals::new();
-        add_allocated_actuals(
-            &mut month_actuals,
+        let allocated = allocated_actuals(
             "a1",
             SPENDING_TAXONOMY,
             Decimal::new(75, 0),
@@ -1641,8 +2292,25 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
         );
 
-        // The excluded subcategory's spend must not roll up into the parent.
-        assert!(month_actuals.is_empty());
+        // The excluded subcategory's spend must not roll up into the parent,
+        // nor count as uncategorized.
+        assert!(allocated.is_empty());
+
+        // An activity with no assignment is uncategorized spend.
+        let uncategorized = allocated_actuals(
+            "a2",
+            SPENDING_TAXONOMY,
+            Decimal::new(20, 0),
+            &meta,
+            &assignments,
+            &splits,
+            &exclusions,
+            &PassthroughFx,
+            "USD",
+            "USD",
+            NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
+        );
+        assert_eq!(uncategorized, vec![(None, Decimal::new(20, 0))]);
     }
 
     #[test]
@@ -1689,6 +2357,8 @@ mod tests {
             category_id: Some("cat_groceries".to_string()),
             group_id: None,
             amount: "not-a-number".to_string(),
+            pacing: None,
+            due_day: None,
         };
 
         assert!(validate_budget_target(&target).is_err());

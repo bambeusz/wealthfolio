@@ -763,6 +763,7 @@
     "byCategory": "按类别",
     "previousBudgetMonth": "上一预算月份",
     "nextBudgetMonth": "下一预算月份",
+    "dueOn": "{{day}}日到期",
     "manage": "管理 →"
   },
   "cashForm": {
@@ -898,6 +899,14 @@
     "plusMore_other": "+ {{count}} 项"
   },
   "budgetEditor": {
+    "pacingLabel": "{{name}}的支出节奏",
+    "pacingTitle": "这笔支出何时发生？",
+    "pacingLinear": "全月均匀分布",
+    "pacingLinearHint": "在整个月中逐步支出。",
+    "pacingMonthlyOnDay": "每月固定日期",
+    "pacingMonthlyOnDayHint": "每月支付一次。到该日之前都视为正常；超出月末的日期按当月最后一天计。",
+    "pacingDueDay": "到期日",
+    "pacingInvalidDay": "请输入 1 到 31 之间的日期。",
     "newGroup": "新分组",
     "addGroup": "添加分组",
     "resetDefaults": "重置为默认值",

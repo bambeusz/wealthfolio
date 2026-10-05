@@ -694,4 +694,10 @@ describe("ALLOWED_API_METHODS", () => {
 
     expect(missing).toEqual([]);
   });
+
+  it("allows the budgets methods across the iframe bridge", () => {
+    for (const method of ["getGroups", "getTargets", "setTargets", "deleteTargets"]) {
+      expect(ALLOWED_API_METHODS.has(`budgets.${method}`)).toBe(true);
+    }
+  });
 });

@@ -340,6 +340,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             "Access to spending reports, categories, categorization rules, and Spending exclusions",
         ),
         (
+            "budgets",
+            "budgets",
+            vec!["getGroups", "getTargets", "setTargets", "deleteTargets"],
+            "Access to read and write monthly spending budgets",
+        ),
+        (
             "settings",
             "settings",
             vec!["get", "update", "backupDatabase"],

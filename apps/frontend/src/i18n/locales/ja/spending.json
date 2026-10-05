@@ -763,6 +763,7 @@
     "byCategory": "カテゴリ別",
     "previousBudgetMonth": "前の予算月",
     "nextBudgetMonth": "次の予算月",
+    "dueOn": "{{day}}日期限",
     "manage": "管理 →"
   },
   "cashForm": {
@@ -898,6 +899,14 @@
     "plusMore_other": "+ 他{{count}}件"
   },
   "budgetEditor": {
+    "pacingLabel": "{{name}}のペース",
+    "pacingTitle": "いつ支出しますか？",
+    "pacingLinear": "月内で均等に",
+    "pacingLinearHint": "月を通して少しずつ支出します。",
+    "pacingMonthlyOnDay": "毎月の支払日",
+    "pacingMonthlyOnDayHint": "月に一度支払います。この日までは予定どおりと判定し、月末を超える日はその月の最終日になります。",
+    "pacingDueDay": "支払日",
+    "pacingInvalidDay": "1〜31の日を入力してください。",
     "newGroup": "新しいグループ",
     "addGroup": "グループを追加",
     "resetDefaults": "既定値に戻す",

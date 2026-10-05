@@ -43,6 +43,9 @@ import type {
   SnapshotImportResult,
   SnapshotInfo,
   SnapshotInput,
+  BudgetGroup,
+  BudgetTarget,
+  BudgetTargetInput,
   CategorizationRule,
   CategorizationRuleInput,
   SpendCategory,
@@ -566,6 +569,46 @@ export interface SpendingAPI {
 }
 
 /**
+ * Budgets APIs
+ * Read and write the user's native monthly spending budgets (the same targets
+ * the Budget page edits). Requires the `budgets` permission.
+ */
+export interface BudgetsAPI {
+  /**
+   * List the budget groups. Empty while Spending is disabled.
+   * @returns Promise resolving to the budget groups
+   */
+  getGroups(): Promise<BudgetGroup[]>;
+
+  /**
+   * List the targets stored for one period. Empty while Spending is disabled.
+   * @param periodKey `"default"` (every month) or a `"YYYY-MM"` month
+   * @returns Promise resolving to that period's targets (month overrides only
+   * for a month — resolve against `"default"` for the effective amount)
+   */
+  getTargets(periodKey: string): Promise<BudgetTarget[]>;
+
+  /**
+   * Create or update targets of one period in a single transaction. Each
+   * target is matched by its category (or group, for a buffer), so writing
+   * the same values again changes nothing — a year of targets is twelve
+   * idempotent calls. A category may appear once per call.
+   * @param periodKey `"default"` or a `"YYYY-MM"` month
+   * @param targets Targets to upsert
+   * @returns Promise resolving to every target now stored for the period
+   */
+  setTargets(periodKey: string, targets: BudgetTargetInput[]): Promise<BudgetTarget[]>;
+
+  /**
+   * Delete targets of one period. Every id must belong to `periodKey`;
+   * otherwise nothing is deleted and the promise rejects.
+   * @param periodKey The period the targets belong to
+   * @param ids Target ids from `getTargets` / `setTargets`
+   */
+  deleteTargets(periodKey: string, ids: string[]): Promise<void>;
+}
+
+/**
  * Contribution limits APIs
  */
 export interface ContributionLimitsAPI {
@@ -1039,6 +1082,9 @@ export interface HostAPI {
 
   /** Spend categorization operations */
   spending: SpendingAPI;
+
+  /** Native monthly budget operations */
+  budgets: BudgetsAPI;
 
   /** Contribution limits operations */
   contributionLimits: ContributionLimitsAPI;

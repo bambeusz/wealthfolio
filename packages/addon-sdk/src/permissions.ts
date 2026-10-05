@@ -160,6 +160,14 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     riskLevel: 'medium',
   },
   {
+    id: 'budgets',
+    name: 'Budgets',
+    description:
+      'View and change your monthly spending budgets: groups, per-category targets and their pacing',
+    functions: ['getGroups', 'getTargets', 'setTargets', 'deleteTargets'],
+    riskLevel: 'medium',
+  },
+  {
     id: 'financial-planning',
     name: 'Financial Planning',
     description: 'Access to financial goals and allocations',

@@ -771,6 +771,7 @@
     "byCategory": "Nach Kategorie",
     "previousBudgetMonth": "Vorheriger Budgetmonat",
     "nextBudgetMonth": "Nächster Budgetmonat",
+    "dueOn": "fällig am {{day}}.",
     "manage": "Verwalten →"
   },
   "cashForm": {
@@ -907,6 +908,14 @@
     "plusMore_other": "+ {{count}} weitere"
   },
   "budgetEditor": {
+    "pacingLabel": "Verteilung für {{name}}",
+    "pacingTitle": "Wann wird das ausgegeben?",
+    "pacingLinear": "Gleichmäßig verteilen",
+    "pacingLinearHint": "Wird über den Monat verteilt ausgegeben.",
+    "pacingMonthlyOnDay": "Fällig am Tag",
+    "pacingMonthlyOnDayHint": "Einmal im Monat bezahlt. Bis zu diesem Tag im Plan; ein Tag nach Monatsende fällt auf den letzten Tag.",
+    "pacingDueDay": "Fälligkeitstag",
+    "pacingInvalidDay": "Gib einen Tag von 1 bis 31 ein.",
     "newGroup": "Neue Gruppe",
     "addGroup": "Gruppe hinzufügen",
     "resetDefaults": "Auf Standard zurücksetzen",

@@ -27,6 +27,10 @@ use crate::activity_classification::{
 };
 use crate::activity_exclusions::ActivityExclusionsRepositoryTrait;
 use crate::activity_splits::ActivitySplitRepositoryTrait;
+use crate::budget::pacing::{
+    days_in_month, historical_curve, history_from_daily, history_months, window_pace, FixedLine,
+    PaceClock, PaceCurve, PaceStatus, PacingRule, WindowPaceInput,
+};
 use crate::budget::service::{
     category_meta, resolve_group_for_category, top_category_id, top_level_categories, TargetIndex,
 };
@@ -46,9 +50,10 @@ const OTHER_GROUP_KEY: &str = "other";
 /// (an income-pattern bucket), not a consumption budget line — so its group is
 /// retired from the spending "Where it went" breakdown.
 const SAVINGS_GROUP_KEY: &str = "savings";
-const TRAILING_WINDOW_DAYS: i64 = 7;
-/// Pace status flips to `Approaching` when projected spend reaches 90% of budget.
-const APPROACHING_THRESHOLD: f64 = 0.9;
+
+/// Spending (FX-converted) on one user-local day for one top-level spending
+/// category; `None` is uncategorized spend.
+type DailySpend = (NaiveDate, Option<String>, f64);
 
 /// Builds reconciled spending-insight payloads for the dashboard.
 pub struct InsightService {
@@ -217,10 +222,38 @@ impl InsightService {
                     && in_window(a, prior_window.0, prior_window.1)
             })
             .collect();
+        // A window that is exactly one local calendar month paces its flexible
+        // budget along the same historical curve as that month's budget card,
+        // built from the months before it.
+        let local_date = |date: DateTime<Utc>| {
+            wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(date, timezone)
+        };
+        let (start_local, end_local) = (local_date(start), local_date(end));
+        let calendar_month = (start_local.day() == 1
+            && end_local.year() == start_local.year()
+            && end_local.month() == start_local.month()
+            && end_local.day() == days_in_month(start_local.year(), start_local.month()))
+        .then(|| history_months(start_local.year(), start_local.month()));
+        let history_acts: Vec<&Activity> = match calendar_month.as_ref().and_then(|m| m.first()) {
+            Some(&(year, month)) => {
+                let history_start = NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(start_local);
+                activities
+                    .iter()
+                    .filter(|a| {
+                        let date = local_date(a.activity_date);
+                        target_account_ids.contains(&a.account_id)
+                            && date >= history_start
+                            && date < start_local
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
 
         let activity_ids: Vec<String> = current_acts
             .iter()
             .chain(prior_acts.iter())
+            .chain(history_acts.iter())
             .map(|a| a.id.clone())
             .collect();
         let assignments = self
@@ -272,13 +305,16 @@ impl InsightService {
 
         let mut category_budgets: HashMap<String, AmountBlock> = HashMap::new();
         for cat in &top_categories {
-            let block = fanout_amount(&month_prorations, |month| {
-                let amount =
-                    target_index.effective_category_decimal(month, SPENDING_TAXONOMY, &cat.id);
-                let has_override =
-                    target_index.has_month_category(month, SPENDING_TAXONOMY, &cat.id);
-                (amount, has_override)
-            });
+            let block =
+                fanout_category_amount(&month_prorations, start_local, end_local, |month| {
+                    let amount =
+                        target_index.effective_category_decimal(month, SPENDING_TAXONOMY, &cat.id);
+                    let has_override =
+                        target_index.has_month_category(month, SPENDING_TAXONOMY, &cat.id);
+                    let rule =
+                        target_index.effective_category_rule(month, SPENDING_TAXONOMY, &cat.id);
+                    (amount, has_override, rule)
+                });
             category_budgets.insert(cat.id.clone(), block);
         }
 
@@ -401,30 +437,48 @@ impl InsightService {
             .iter()
             .map(|g| g.budget.total + g.buffer.total)
             .sum();
-        let now = Utc::now();
+        let (fixed_lines, fixed_ids) =
+            fixed_lines_for_window(&group_insights, &target_index, start_local, end_local);
+        let daily_spend = |acts: &[&Activity]| {
+            daily_spend_by_top(
+                acts,
+                &account_types,
+                &transfer_groups,
+                &assignments_by_activity,
+                &splits_by_activity,
+                &spending_meta,
+                &exclusions,
+                &activity_exclusions,
+                self.fx_service.as_ref(),
+                currency,
+                fx_as_of,
+                timezone,
+            )
+        };
+        let curve = calendar_month.as_ref().and_then(|months| {
+            let history = history_from_daily(
+                months,
+                daily_spend(&history_acts)
+                    .into_iter()
+                    .filter(|(_, category, _)| is_flexible(category, &fixed_ids))
+                    .map(|(date, _, amount)| (date, amount)),
+            );
+            historical_curve(
+                &history,
+                days_in_month(start_local.year(), start_local.month()),
+            )
+        });
         let pace = compute_pace(
-            &current_acts,
-            &account_types,
-            &assignments_by_activity,
-            &splits_by_activity,
-            &exclusions,
-            &activity_exclusions,
-            start,
-            end,
-            now,
+            PaceClock::for_window(start_local, end_local, local_date(Utc::now())),
+            start_local,
             total_spent,
             total_budget,
-            self.fx_service.as_ref(),
-            currency,
-            fx_as_of,
-            timezone,
+            &fixed_lines,
+            &fixed_ids,
+            &daily_spend(&current_acts),
+            curve.as_ref(),
         );
-        let status = compute_health_status(
-            total_spent,
-            total_budget,
-            total_income,
-            pace.projected_spend,
-        );
+        let status = compute_health_status(pace.status, total_budget, total_income, total_spent);
 
         // ── 10. Backfill pct_of_total_spent now that we know the total ────────
         for g in &mut group_insights {
@@ -1189,6 +1243,44 @@ where
     }
 }
 
+/// `fanout_amount` for a category: a linear target is prorated by days, a
+/// once-a-month target counts in full when its due date (user-local) falls
+/// inside the window and not at all otherwise — a week holding the rent's due
+/// day budgets the whole rent.
+fn fanout_category_amount<F>(
+    prorations: &[MonthProration],
+    window_start: NaiveDate,
+    window_end: NaiveDate,
+    lookup: F,
+) -> AmountBlock
+where
+    F: Fn(&str) -> (Decimal, bool, PacingRule),
+{
+    let mut block = fanout_amount(prorations, |month| {
+        let (amount, has_override, _) = lookup(month);
+        (amount, has_override)
+    });
+    for entry in &mut block.monthly_breakdown {
+        let (amount, _, rule) = lookup(&entry.month);
+        let (year, month) = month_parts(&entry.month);
+        if let Some(due) = rule.due_date_in_month(year, month) {
+            let in_window = due >= window_start && due <= window_end;
+            entry.amount = if in_window {
+                decimal_to_f64(amount)
+            } else {
+                0.0
+            };
+        }
+    }
+    block.total = block.monthly_breakdown.iter().map(|m| m.amount).sum();
+    block
+}
+
+fn month_parts(month_key: &str) -> (i32, u32) {
+    let (start, _) = month_bounds(month_key);
+    (start.year(), start.month())
+}
+
 fn combine_monthly<'a, I>(blocks: I) -> Vec<MonthlyAmount>
 where
     I: IntoIterator<Item = &'a AmountBlock>,
@@ -1344,122 +1436,173 @@ fn is_leap(year: i32) -> bool {
 // Pace + status
 // ──────────────────────────────────────────────────────────────────────────────
 
-// 11 args is intentional — splitting into a struct here would just be
-// shuffling the same fields with no shared call site to benefit. The window
-// inputs (start/end/now), the FX trio (fx/target_currency/fx_as_of), and
-// the result-aggregation pair (spent/budget) all serve different concerns.
+/// Per-day spending of `acts` by user-local day and top-level spending
+/// category, FX-converted like the headline aggregate. Feeds the run rate
+/// (current window) and the historical curve (the months before it).
 #[allow(clippy::too_many_arguments)]
-fn compute_pace(
+fn daily_spend_by_top(
     acts: &[&Activity],
     account_types: &HashMap<String, String>,
+    transfer_groups: &HashSet<String>,
     assignments_by_activity: &AssignmentsByActivity,
     splits_by_activity: &SplitsByActivity,
+    spending_meta: &HashMap<String, wealthfolio_core::taxonomies::Category>,
     exclusions: &ExclusionIndex,
     activity_exclusions: &ActivityExclusionIndex,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    now: DateTime<Utc>,
-    spent: f64,
-    budget: f64,
     fx: &dyn FxServiceTrait,
     target_currency: &str,
     fx_as_of: NaiveDate,
     timezone: &str,
-) -> PaceState {
-    // All day anchors in the user's local timezone so the trailing-7 boundary
-    // and the activity-day comparison below are in the same domain. Otherwise
-    // a UTC±12 user near midnight would see a day shift between
-    // `trail_start..=elapsed_d` (UTC) and `d` (user-local), dropping or
-    // adding a day's worth of activities.
-    let start_d =
-        wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(start, timezone);
-    let end_d = wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(end, timezone);
-    let now_d = wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(now, timezone);
-    let total_days = (end_d - start_d).num_days() + 1;
+) -> Vec<DailySpend> {
+    let mut out = Vec::new();
+    for a in acts {
+        let Some(account_type) = account_types.get(&a.account_id) else {
+            continue;
+        };
+        // The one classifier call for the pace: same classification as the
+        // headline it projects, so an activity excluded from Spending adds
+        // nothing to the run rate or the historical curve either.
+        let classification =
+            classify_for_totals(a, account_type, transfer_groups, activity_exclusions);
+        let spending_native = classification.spending_amount(activity_abs_amount(a));
+        if spending_native == Decimal::ZERO {
+            continue;
+        }
+        let date = wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(
+            a.activity_date,
+            timezone,
+        );
+        let convert = |native: Decimal| {
+            crate::fx::convert(fx, native, &a.currency, target_currency, fx_as_of)
+                .map(decimal_to_f64)
+                .unwrap_or(0.0)
+        };
+        // Excluded categories don't count toward the pace, matching the
+        // headline it projects.
+        let (allocations, excluded_native) = split_spending_allocations(
+            &a.id,
+            SPENDING_TAXONOMY,
+            spending_native,
+            assignments_by_activity,
+            splits_by_activity,
+            exclusions,
+        );
+        if allocations.is_empty() {
+            if excluded_native == Decimal::ZERO {
+                out.push((date, None, convert(spending_native)));
+            }
+            continue;
+        }
+        for allocation in allocations {
+            let top_id = top_category_id(&allocation.category_id, spending_meta);
+            out.push((date, Some(top_id), convert(allocation.amount)));
+        }
+    }
+    out
+}
 
-    // Day relative to the window:
-    //   window is in the past   → elapsed = total
-    //   window is in the future → elapsed = 0
-    //   window includes today   → elapsed = days from start to today (inclusive)
-    let elapsed_d = if now_d > end_d {
-        end_d
-    } else if now_d < start_d {
-        start_d - Duration::days(1)
-    } else {
-        now_d
-    };
-    let days_elapsed = (elapsed_d - start_d).num_days() + 1;
-    let days_elapsed = days_elapsed.clamp(0, total_days);
-    let days_remaining = (total_days - days_elapsed).max(0);
+fn is_flexible(category: &Option<String>, fixed_ids: &HashSet<String>) -> bool {
+    category.as_ref().is_none_or(|id| !fixed_ids.contains(id))
+}
 
-    // Trailing-7 average: sum of spend on the last min(7, days_elapsed) days ending at elapsed_d.
-    let trail_days = TRAILING_WINDOW_DAYS.min(days_elapsed);
-    let daily_avg = if trail_days > 0 {
-        let trail_start = elapsed_d - Duration::days(trail_days - 1);
-        let mut sum = Decimal::ZERO;
-        for a in acts {
-            let Some(account_type) = account_types.get(&a.account_id) else {
+/// Fixed (once-a-month) categories counted in the window's budget, with a step
+/// on the day index of each due date inside the window. A category is fixed
+/// when its pacing is once-a-month in any month of the window, even if no due
+/// date falls inside (then it has no budget here and only its spend counts).
+fn fixed_lines_for_window(
+    groups: &[GroupInsight],
+    target_index: &TargetIndex<'_>,
+    window_start: NaiveDate,
+    window_end: NaiveDate,
+) -> (Vec<FixedLine>, HashSet<String>) {
+    let mut lines = Vec::new();
+    let mut ids = HashSet::new();
+    for category in groups.iter().flat_map(|g| &g.categories) {
+        let mut fixed = false;
+        let mut steps = Vec::new();
+        for entry in &category.budget.monthly_breakdown {
+            let rule = target_index.effective_category_rule(
+                &entry.month,
+                SPENDING_TAXONOMY,
+                &category.category_id,
+            );
+            let (year, month) = month_parts(&entry.month);
+            let Some(due) = rule.due_date_in_month(year, month) else {
                 continue;
             };
-            // Filter by user-local day so the trailing-7 window matches the
-            // days the user perceives, consistent with compute_by_day's
-            // bucketing convention. Both endpoints (`trail_start`,
-            // `elapsed_d`) are derived from `now.date_naive()` upstream — for
-            // TZ-consistency they should be in user-local too, which is the
-            // natural read of "today" / "7 days ago".
-            let d = wealthfolio_core::utils::time_utils::activity_date_in_user_timezone(
-                a.activity_date,
-                timezone,
-            );
-            if d < trail_start || d > elapsed_d {
-                continue;
-            }
-            let classification = classify_plain_for_totals(a, account_type, activity_exclusions);
-            let native = classification.spending_amount(activity_abs_amount(a));
-            // Pace projects visible spend only — excluded categories don't
-            // count toward the run-rate, matching the headline they project.
-            let native = native
-                - excluded_spending_native(
-                    &a.id,
-                    SPENDING_TAXONOMY,
-                    native,
-                    assignments_by_activity,
-                    splits_by_activity,
-                    exclusions,
-                );
-            if let Some(amount) =
-                crate::fx::convert(fx, native, &a.currency, target_currency, fx_as_of)
-            {
-                sum += amount;
+            fixed = true;
+            if due >= window_start && due <= window_end {
+                steps.push(((due - window_start).num_days() as u32 + 1, entry.amount));
             }
         }
-        // Clamp at zero: a refund-heavy trailing window would otherwise produce
-        // a negative daily_avg and a projection lower than current spent, which
-        // is misleading. The actual run-rate of charges (net of refunds) is
-        // bounded below by zero — refunds don't predict future "negative spend".
-        (decimal_to_f64(sum) / trail_days as f64).max(0.0)
-    } else {
-        0.0
-    };
+        if fixed {
+            ids.insert(category.category_id.clone());
+            lines.push(FixedLine {
+                spent: category.spent,
+                steps,
+            });
+        }
+    }
+    (lines, ids)
+}
 
-    let projected_spend = spent + daily_avg * days_remaining as f64;
-    let expected_spend_to_date = if total_days > 0 {
-        budget * (days_elapsed as f64 / total_days as f64)
-    } else {
-        0.0
-    };
-
+/// The window's pace and status through the shared budget pacing rule, so a
+/// month on the Insights page reads exactly like that month's budget card.
+#[allow(clippy::too_many_arguments)]
+fn compute_pace(
+    clock: PaceClock,
+    window_start: NaiveDate,
+    spent: f64,
+    budget: f64,
+    fixed_lines: &[FixedLine],
+    fixed_ids: &HashSet<String>,
+    daily: &[DailySpend],
+    curve: Option<&PaceCurve>,
+) -> PaceState {
+    let elapsed = clock.elapsed_days as usize;
+    let mut flexible_daily = vec![0.0; elapsed];
+    let mut spent_daily = vec![0.0; elapsed];
+    for (date, category, amount) in daily {
+        let index = (*date - window_start).num_days();
+        if index < 0 || index as usize >= elapsed {
+            continue;
+        }
+        spent_daily[index as usize] += amount;
+        if is_flexible(category, fixed_ids) {
+            flexible_daily[index as usize] += amount;
+        }
+    }
+    let pace = window_pace(WindowPaceInput {
+        clock,
+        available: budget,
+        spent,
+        fixed: fixed_lines,
+        flexible_daily: &flexible_daily,
+        spent_daily: &spent_daily,
+        curve,
+    });
     PaceState {
-        daily_avg,
-        days_elapsed,
-        days_remaining,
-        projected_spend,
-        expected_spend_to_date,
+        daily_avg: pace.flexible_daily_rate,
+        days_elapsed: i64::from(pace.elapsed_days),
+        days_remaining: i64::from(clock.total_days - clock.elapsed_days),
+        projected_spend: pace.projected,
+        expected_spend_to_date: pace.expected_to_date,
+        fixed_expected_to_date: pace.fixed_expected_to_date,
+        flexible_expected_to_date: pace.flexible_expected_to_date,
+        projection_reliable: pace.projection_reliable,
+        status: pace.status,
     }
 }
 
-fn compute_health_status(spent: f64, budget: f64, income: f64, projected: f64) -> HealthStatus {
-    if budget > 0.0 && spent > budget {
+/// Health = the pace status, except that observed income below spend
+/// (`CashflowNegative`) outranks pace unless a set budget is already blown.
+fn compute_health_status(
+    pace_status: PaceStatus,
+    budget: f64,
+    income: f64,
+    spent: f64,
+) -> HealthStatus {
+    if budget > 0.0 && pace_status == PaceStatus::Over {
         return HealthStatus::Over;
     }
     // Only fire CashflowNegative when *some* income was observed and it failed
@@ -1469,13 +1612,11 @@ fn compute_health_status(spent: f64, budget: f64, income: f64, projected: f64) -
     if income > 0.0 && income < spent {
         return HealthStatus::CashflowNegative;
     }
-    if budget <= 0.0 && spent > 0.0 {
-        return HealthStatus::Over;
+    match pace_status {
+        PaceStatus::Over => HealthStatus::Over,
+        PaceStatus::Approaching => HealthStatus::Approaching,
+        PaceStatus::OnTrack => HealthStatus::OnTrack,
     }
-    if budget > 0.0 && (projected > budget || spent / budget > APPROACHING_THRESHOLD) {
-        return HealthStatus::Approaching;
-    }
-    HealthStatus::OnTrack
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1597,6 +1738,10 @@ fn empty_insight(period: PeriodMeta, prior: PeriodMeta, currency: &str) -> Spend
         days_remaining: 0,
         projected_spend: 0.0,
         expected_spend_to_date: 0.0,
+        fixed_expected_to_date: 0.0,
+        flexible_expected_to_date: 0.0,
+        projection_reliable: false,
+        status: PaceStatus::OnTrack,
     };
     SpendingInsight {
         period,
@@ -1914,115 +2059,97 @@ mod tests {
     // ── Health status ─────────────────────────────────────────────────────────
 
     #[test]
-    fn status_over_when_spent_exceeds_budget() {
-        assert_eq!(
-            compute_health_status(150.0, 100.0, 200.0, 150.0),
-            HealthStatus::Over
-        );
-    }
-
-    #[test]
-    fn status_cashflow_negative_only_when_income_present_and_below_spend() {
-        // Some income observed, but it didn't cover spend.
-        assert_eq!(
-            compute_health_status(80.0, 1000.0, 50.0, 80.0),
-            HealthStatus::CashflowNegative
-        );
-        // Zero income should NOT trigger CashflowNegative — that's the normal
-        // state for credit-card-only spending accounts.
-        assert_eq!(
-            compute_health_status(50.0, 100.0, 0.0, 50.0),
-            HealthStatus::OnTrack
-        );
-    }
-
-    #[test]
-    fn status_over_when_spending_without_budget() {
-        assert_eq!(
-            compute_health_status(50.0, 0.0, 0.0, 50.0),
-            HealthStatus::Over
-        );
-    }
-
-    #[test]
-    fn status_approaching_when_projection_breaches_budget() {
-        // Spent comfortably under, but projection blows past.
-        assert_eq!(
-            compute_health_status(60.0, 100.0, 100.0, 130.0),
-            HealthStatus::Approaching
-        );
-    }
-
-    #[test]
-    fn status_on_track_for_healthy_run() {
-        assert_eq!(
-            compute_health_status(40.0, 100.0, 100.0, 80.0),
-            HealthStatus::OnTrack
-        );
+    fn health_status_follows_the_pace_status() {
+        // (pace status, budget, income, spent, health)
+        let cases = [
+            (PaceStatus::Over, 100.0, 200.0, 150.0, HealthStatus::Over),
+            // Some income observed, but it didn't cover spend.
+            (
+                PaceStatus::OnTrack,
+                1000.0,
+                50.0,
+                80.0,
+                HealthStatus::CashflowNegative,
+            ),
+            (
+                PaceStatus::Approaching,
+                1000.0,
+                50.0,
+                80.0,
+                HealthStatus::CashflowNegative,
+            ),
+            // Zero income should NOT trigger CashflowNegative — that's the
+            // normal state for credit-card-only spending accounts.
+            (PaceStatus::OnTrack, 100.0, 0.0, 50.0, HealthStatus::OnTrack),
+            // Spending without any budget is over.
+            (PaceStatus::Over, 0.0, 0.0, 50.0, HealthStatus::Over),
+            (
+                PaceStatus::Approaching,
+                100.0,
+                100.0,
+                60.0,
+                HealthStatus::Approaching,
+            ),
+            (
+                PaceStatus::OnTrack,
+                100.0,
+                100.0,
+                40.0,
+                HealthStatus::OnTrack,
+            ),
+        ];
+        for (pace, budget, income, spent, health) in cases {
+            assert_eq!(
+                compute_health_status(pace, budget, income, spent),
+                health,
+                "{pace:?} budget {budget} income {income} spent {spent}"
+            );
+        }
     }
 
     // ── Trailing-7 pace ───────────────────────────────────────────────────────
 
+    fn day(m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, m, d).unwrap()
+    }
+
     #[test]
     fn pace_projects_zero_remaining_for_closed_window() {
+        let clock = PaceClock::for_window(day(3, 1), day(5, 19), day(5, 19));
         let pace = compute_pace(
-            &[],
-            &HashMap::new(),
-            &AssignmentsByActivity::new(),
-            &SplitsByActivity::new(),
-            &ExclusionIndex::empty(),
-            &ActivityExclusionIndex::empty(),
-            dt(2026, 3, 1),
-            dt(2026, 5, 19),
-            dt(2026, 5, 19),
+            clock,
+            day(3, 1),
             1000.0,
             500.0,
-            &fx(),
-            "USD",
-            NaiveDate::from_ymd_opt(2026, 5, 19).unwrap(),
-            "",
+            &[],
+            &HashSet::new(),
+            &[],
+            None,
         );
         assert_eq!(pace.days_remaining, 0);
         assert_eq!(pace.projected_spend, 1000.0);
+        assert_eq!(pace.status, PaceStatus::Over);
     }
 
     #[test]
     fn pace_uses_trailing_window_for_open_periods() {
-        use rust_decimal::Decimal;
-        use serde_json::Value;
-        use wealthfolio_core::accounts::account_types;
-        use wealthfolio_core::activities::{Activity, ActivityStatus};
-
         // Window: May 1 → May 31; today = May 19. days_elapsed=19, days_remaining=12.
         // Trailing 7 = May 13..=19; put $100 on each of those days → $100/day average.
-        let mut acts: Vec<Activity> = Vec::new();
-        for d in 13..=19 {
-            acts.push(activity_on(dt(2026, 5, d), Decimal::new(10000, 2)));
-        }
-        let refs: Vec<&Activity> = acts.iter().collect();
-        let mut account_types = HashMap::new();
-        account_types.insert(
-            "account-1".to_string(),
-            account_types::CREDIT_CARD.to_string(),
-        );
-
-        let spent_to_date = 800.0; // includes earlier days outside trailing 7
+        let daily: Vec<DailySpend> = (13..=19)
+            .map(|d| (day(5, d), Some("cat_food".to_string()), 100.0))
+            .chain(std::iter::once((day(5, 2), None, 100.0)))
+            .collect();
+        let clock = PaceClock::for_window(day(5, 1), day(5, 31), day(5, 19));
+        let spent_to_date = 800.0;
         let pace = compute_pace(
-            &refs,
-            &account_types,
-            &AssignmentsByActivity::new(),
-            &SplitsByActivity::new(),
-            &ExclusionIndex::empty(),
-            &ActivityExclusionIndex::empty(),
-            dt(2026, 5, 1),
-            dt(2026, 5, 31),
-            dt(2026, 5, 19),
+            clock,
+            day(5, 1),
             spent_to_date,
             2000.0,
-            &fx(),
-            "USD",
-            NaiveDate::from_ymd_opt(2026, 5, 19).unwrap(),
-            "",
+            &[],
+            &HashSet::new(),
+            &daily,
+            None,
         );
         assert_eq!(pace.days_elapsed, 19);
         assert_eq!(pace.days_remaining, 12);
@@ -2031,6 +2158,88 @@ mod tests {
         assert!((pace.projected_spend - 2000.0).abs() < 1e-9);
         // expected = 2000 * (19/31)
         assert!((pace.expected_spend_to_date - 2000.0 * 19.0 / 31.0).abs() < 1e-9);
+        assert_eq!(pace.status, PaceStatus::OnTrack);
+    }
+
+    #[test]
+    fn rent_paid_on_due_day_is_on_track_and_not_in_the_run_rate() {
+        // October: rent 1200 due on the 1st and paid; 600 flexible budget.
+        // Day 8: groceries 20/day for the last week.
+        let mut daily: Vec<DailySpend> =
+            vec![(day(10, 1), Some("cat_housing".to_string()), 1200.0)];
+        daily.extend((2..=8).map(|d| (day(10, d), Some("cat_groceries".to_string()), 20.0)));
+        let fixed_ids: HashSet<String> = HashSet::from(["cat_housing".to_string()]);
+        let fixed_lines = vec![FixedLine {
+            spent: 1200.0,
+            steps: vec![(1, 1200.0)],
+        }];
+        let clock = PaceClock::for_window(day(10, 1), day(10, 31), day(10, 8));
+        let pace = compute_pace(
+            clock,
+            day(10, 1),
+            1340.0,
+            1800.0,
+            &fixed_lines,
+            &fixed_ids,
+            &daily,
+            None,
+        );
+        assert!((pace.daily_avg - 20.0).abs() < 1e-9);
+        assert!((pace.fixed_expected_to_date - 1200.0).abs() < 1e-9);
+        assert!((pace.flexible_expected_to_date - 600.0 * 8.0 / 31.0).abs() < 1e-9);
+        // 1200 + 140 + 20 × 23 = 1800: exactly on budget, not over.
+        assert!((pace.projected_spend - 1800.0).abs() < 1e-9);
+        assert!(pace.projection_reliable);
+        assert_eq!(pace.status, PaceStatus::OnTrack);
+    }
+
+    #[test]
+    fn fanout_budgets_a_fixed_target_in_full_when_its_due_day_is_in_the_window() {
+        let rent = PacingRule::new(crate::budget::BudgetPacing::MonthlyOnDay, Some(31));
+        // Sep 24 → Oct 7 holds Sep 30 (due 31 clamped) but not Oct 31.
+        let months = ["2026-09".to_string(), "2026-10".to_string()];
+        let prorations = build_month_prorations(dt(2026, 9, 24), dt(2026, 10, 7), &months);
+        let block = fanout_category_amount(&prorations, day(9, 24), day(10, 7), |_| {
+            (Decimal::new(1200, 0), false, rent)
+        });
+        assert_eq!(block.monthly_breakdown[0].amount, 1200.0);
+        assert_eq!(block.monthly_breakdown[1].amount, 0.0);
+        assert_eq!(block.total, 1200.0);
+        // Linear targets keep the day proration.
+        let block = fanout_category_amount(&prorations, day(9, 24), day(10, 7), |_| {
+            (Decimal::new(300, 0), false, PacingRule::LINEAR)
+        });
+        assert!((block.total - (300.0 * 7.0 / 30.0 + 300.0 * 7.0 / 31.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn daily_spend_buckets_uncategorized_spend_by_local_day() {
+        use rust_decimal::Decimal;
+        use serde_json::Value;
+        use wealthfolio_core::accounts::account_types;
+        use wealthfolio_core::activities::{Activity, ActivityStatus};
+
+        let act = activity_on(dt(2026, 5, 13), Decimal::new(10000, 2));
+        let mut types = HashMap::new();
+        types.insert(
+            "account-1".to_string(),
+            account_types::CREDIT_CARD.to_string(),
+        );
+        let daily = daily_spend_by_top(
+            &[&act],
+            &types,
+            &HashSet::new(),
+            &AssignmentsByActivity::new(),
+            &SplitsByActivity::new(),
+            &HashMap::new(),
+            &ExclusionIndex::empty(),
+            &ActivityExclusionIndex::empty(),
+            &fx(),
+            "USD",
+            day(5, 31),
+            "",
+        );
+        assert_eq!(daily, vec![(day(5, 13), None, 100.0)]);
 
         fn activity_on(
             date: DateTime<Utc>,
@@ -2070,7 +2279,8 @@ mod tests {
     }
 
     /// The pace run-rate counts only what the totals count: a large charge the
-    /// user excluded from Spending must not inflate the trailing average.
+    /// user excluded from Spending must not inflate the trailing average. The
+    /// daily spend also builds the historical curve, so this covers it too.
     #[test]
     fn pace_ignores_activities_excluded_from_spending() {
         use wealthfolio_core::accounts::account_types;
@@ -2116,22 +2326,31 @@ mod tests {
                 group_id: None,
             }]);
 
-        let pace = compute_pace(
+        let daily = daily_spend_by_top(
             &refs,
             &account_types,
+            &HashSet::new(),
             &AssignmentsByActivity::new(),
             &SplitsByActivity::new(),
+            &HashMap::new(),
             &ExclusionIndex::empty(),
             &excluded,
-            dt(2026, 5, 1),
-            dt(2026, 5, 31),
-            dt(2026, 5, 19),
-            70.0,
-            1000.0,
             &fx(),
             "USD",
-            NaiveDate::from_ymd_opt(2026, 5, 19).unwrap(),
+            day(5, 19),
             "",
+        );
+        assert_eq!(daily, vec![(day(5, 19), None, 70.0)]);
+
+        let pace = compute_pace(
+            PaceClock::for_window(day(5, 1), day(5, 31), day(5, 19)),
+            day(5, 1),
+            70.0,
+            1000.0,
+            &[],
+            &HashSet::new(),
+            &daily,
+            None,
         );
 
         // Trailing 7 days hold only the 70 that counts: 70 / 7 = 10 a day.

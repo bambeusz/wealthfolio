@@ -25,7 +25,7 @@ import { useSpendingSettings } from "../../../hooks/use-spending-settings";
 import { rollUpToTopLevel, topCategoryId } from "../../../lib/category-rollup";
 import { getZonedDateParts } from "../../../lib/timezone";
 import type { ReportsRange } from "../../../lib/reports-period";
-import type { BudgetCategoryRow, BudgetSnapshot } from "../../../types/budget";
+import type { BudgetCategoryRow, BudgetSnapshot, PaceStatus } from "../../../types/budget";
 import type { PaceState } from "../../../types/insight";
 import type { CategoryBreakdownRow, MonthBucket, MonthlyReport } from "../../../types/report";
 import { CategoryIcon } from "../../category-chips";
@@ -269,6 +269,12 @@ const PaceCard: FC<PaceCardProps> = ({
   );
 };
 
+const PACE_STATUS_TO_CARD: Record<PaceStatus, PaceComputed["status"]> = {
+  on_track: "ok",
+  approaching: "approach",
+  over: "over",
+};
+
 interface PaceComputed {
   status: "ok" | "approach" | "over";
   narrative: ReactNode;
@@ -320,13 +326,22 @@ function computePace(
   // Suppress projection until we have at least 7 days of data, matching the
   // forecast-reliability rule already used by budget-line-chart-card.tsx.
   const PROJECTION_MIN_DAYS = 7;
-  const projectionReliable = !isLive || daysElapsed >= PROJECTION_MIN_DAYS;
+  const projectionReliable =
+    !isLive || (reconciledPace?.projectionReliable ?? daysElapsed >= PROJECTION_MIN_DAYS);
 
   const dailyAvg = reconciledPace?.dailyAvg ?? (daysElapsed > 0 ? spent / daysElapsed : 0);
   const expectedDailyPace = target > 0 && totalDays > 0 ? target / totalDays : 0;
 
   const percentSpent = target > 0 ? spent / target : 0;
-  const percentPace = isLive ? elapsed : 1;
+  // The pace tick sits where the backend expects spending to be today (bills
+  // step up on their due day), not at the elapsed share of the window.
+  const percentPace = reconciledPace
+    ? target > 0
+      ? reconciledPace.expectedSpendToDate / target
+      : 0
+    : isLive
+      ? elapsed
+      : 1;
 
   const projection = !isLive
     ? spent
@@ -336,8 +351,11 @@ function computePace(
   const expectedSoFar = reconciledPace?.expectedSpendToDate ?? expectedDailyPace * daysElapsed;
   const diffFromPace = spent - expectedSoFar;
 
-  const status: PaceComputed["status"] =
-    percentSpent > 1 ? "over" : percentSpent >= 0.85 ? "approach" : "ok";
+  // Status is the backend's (`headline.pace.status`): the same pacing-aware
+  // rule as the dashboard budget card, never re-derived here.
+  const status: PaceComputed["status"] = reconciledPace
+    ? PACE_STATUS_TO_CARD[reconciledPace.status]
+    : "ok";
 
   // Right-side context line. "left in [month]" only makes sense when the
   // window IS that month; for multi-month windows say "left in the period".

@@ -35,8 +35,14 @@ pub trait BudgetRepositoryTrait: Send + Sync {
     ) -> Result<Vec<BudgetGroupAssignment>>;
 
     async fn list_targets(&self) -> Result<Vec<BudgetTarget>>;
+    /// Upserts by (period, type, category | group). A `None` pacing keeps the
+    /// stored row's pacing (linear for a new row).
     async fn upsert_target(&self, target: NewBudgetTarget) -> Result<BudgetTarget>;
+    /// `upsert_target` for many rows in one transaction.
+    async fn upsert_targets(&self, targets: Vec<NewBudgetTarget>) -> Result<Vec<BudgetTarget>>;
     async fn delete_target(&self, id: &str) -> Result<()>;
+    /// Deletes all `ids` in one transaction; unknown ids are ignored.
+    async fn delete_targets(&self, ids: Vec<String>) -> Result<()>;
 
     async fn list_rollover_settings(&self) -> Result<Vec<BudgetRolloverSetting>>;
     async fn upsert_rollover_setting(

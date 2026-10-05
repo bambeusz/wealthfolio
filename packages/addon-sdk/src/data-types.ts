@@ -813,6 +813,68 @@ export interface SpendingReport {
   byDayByCategory: SpendingDayCategoryBucket[];
 }
 
+/**
+ * How a budget target is expected to be spent across its month:
+ * `linear` spreads it evenly, `monthly_on_day` spends it once on `dueDay`
+ * (rent, subscriptions). Pacing decides the on-track status.
+ */
+export type BudgetPacing = 'linear' | 'monthly_on_day';
+
+/** `category` budgets one spending category; `group_buffer` adds slack to a group. */
+export type BudgetTargetType = 'category' | 'group_buffer';
+
+/** A budget group (Needs, Wants, …) that spending categories roll up into. */
+export interface BudgetGroup {
+  id: string;
+  name: string;
+  key: string;
+  color: string | null;
+  icon: string | null;
+  sortOrder: number;
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A stored budget target. `periodKey` is `"default"` (every month) or a
+ * `"YYYY-MM"` month override.
+ */
+export interface BudgetTarget {
+  id: string;
+  periodKey: string;
+  targetType: BudgetTargetType;
+  taxonomyId: string | null;
+  categoryId: string | null;
+  groupId: string | null;
+  /** Decimal string in the base currency. */
+  amount: string;
+  pacing: BudgetPacing;
+  /** 1–31 for `monthly_on_day` (clamped to the month's length), otherwise null. */
+  dueDay: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One target for `budgets.setTargets`; upserted by its category or group. */
+export type BudgetTargetInput =
+  | {
+      targetType: 'category';
+      categoryId: string;
+      /** Defaults to the spending taxonomy (`spending_categories`). */
+      taxonomyId?: string;
+      amount: number | string;
+      /** Omit to keep the stored pacing (a new month override inherits the default's). */
+      pacing?: BudgetPacing;
+      /** Required with `monthly_on_day`, 1–31. */
+      dueDay?: number | null;
+    }
+  | {
+      targetType: 'group_buffer';
+      groupId: string;
+      amount: number | string;
+    };
+
 export interface MonetaryValue {
   local: number;
   base: number;

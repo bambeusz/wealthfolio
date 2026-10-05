@@ -120,6 +120,7 @@ const accounts = await ctx.api.accounts.getAll();
 | `performance`         | Medium     | calculateHistory, calculateSummary, calculateAccountsSimple          |
 | `currency`            | Low        | getAll, update, add, getRatesForDates                                |
 | `spending`            | Medium     | isEnabled, getCategories, getRules, saveRule, deleteRule, rerunRules |
+| `budgets`             | Medium     | getGroups, getTargets, setTargets, deleteTargets                     |
 | `financial-planning`  | Medium     | getAll, create, update, getFunding, saveFunding                      |
 | `contribution-limits` | Medium     | getAll, create, update, calculateDeposits                            |
 | `settings`            | Medium     | get, update, backupDatabase                                          |

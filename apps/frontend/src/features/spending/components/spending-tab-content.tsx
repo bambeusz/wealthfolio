@@ -74,7 +74,6 @@ import {
   getZonedDateParts,
   localDateBoundaryToISOString,
   localDateParts,
-  zonedCalendarDateBoundaryToDate,
 } from "../lib/timezone";
 import { BudgetLineChartCard } from "./budget-line-chart-card";
 import { CashFlowStrip } from "./cash-flow-strip";
@@ -484,11 +483,6 @@ export default function SpendingTabContent() {
         : { ...month, day: daysInCalendarMonth(month.year, month.month) };
     return { from: localDateFromParts(start), to: localDateFromParts(end) };
   }, [budgetMonthKey, currentBudgetMonthKey, todayParts]);
-  const monthReportReq = useMemo(
-    () => rangeToReportRequest(budgetMonthRange, appTimezone),
-    [budgetMonthRange, appTimezone],
-  );
-  const { data: monthReport } = useSpendingReport(monthReportReq);
   const budgetMonthActivityRange = useMemo(
     () => ({
       from: formatDateISO(budgetMonthRange.from),
@@ -503,34 +497,6 @@ export default function SpendingTabContent() {
       return next > currentBudgetMonthKey ? currentBudgetMonthKey : next;
     });
   };
-
-  const historyReportReq = useMemo(() => {
-    const month = parseMonthKey(budgetMonthKey) ?? todayParts;
-    const monthStart = { year: month.year, month: month.month, day: 1 };
-    const historyStart = addCalendarMonths(monthStart, -3);
-    const historyEndMonth = addCalendarMonths(monthStart, -1);
-    const historyEnd = {
-      ...historyEndMonth,
-      day: daysInCalendarMonth(historyEndMonth.year, historyEndMonth.month),
-    };
-    return {
-      startDate: zonedCalendarDateBoundaryToDate(historyStart, "start", appTimezone).toISOString(),
-      endDate: zonedCalendarDateBoundaryToDate(historyEnd, "end", appTimezone).toISOString(),
-    };
-  }, [budgetMonthKey, appTimezone, todayParts]);
-  const { data: historyReport } = useSpendingReport(historyReportReq);
-
-  const historicalDailyAvg = useMemo(() => {
-    const total = historyReport?.current.outflow ?? 0;
-    if (total <= 0) return 0;
-    const month = parseMonthKey(budgetMonthKey) ?? todayParts;
-    const monthStart = { year: month.year, month: month.month, day: 1 };
-    const start = addCalendarMonths(monthStart, -3);
-    const endMonth = addCalendarMonths(monthStart, -1);
-    const end = { ...endMonth, day: daysInCalendarMonth(endMonth.year, endMonth.month) };
-    const days = Math.max(1, calendarDaysBetweenInclusive(start, end));
-    return total / days;
-  }, [historyReport, budgetMonthKey, todayParts]);
 
   // Always render in the user's base currency. The backend FX-converts every
   // activity in `report` to base at period end, so labeling by the first
@@ -1229,17 +1195,12 @@ export default function SpendingTabContent() {
                   onNextMonth={() => shiftBudgetMonth(1)}
                   canGoNextMonth={budgetMonthKey < currentBudgetMonthKey}
                   activityRange={budgetMonthActivityRange}
-                  target={budgetCardBudget?.computed.totals.spendingPlanned ?? 0}
-                  spent={monthReport?.current.outflow ?? 0}
+                  pace={budgetCardBudget?.computed.pace ?? null}
                   currency={budgetCardBudget?.computed.currency ?? currency}
-                  historicalDailyAvg={historicalDailyAvg}
                   allocations={
                     budgetCardBudget?.computed.groupRows.flatMap((row) => row.categories) ?? []
                   }
-                  spendingBreakdown={monthReport?.spendingBreakdown ?? []}
                   categoriesMeta={categoriesMeta}
-                  monthByDay={monthReport?.byDay ?? []}
-                  historicalByDay={historyReport?.byDay ?? []}
                 />
               </div>
 

@@ -370,6 +370,8 @@ pub fn run() {
             commands::spending::delete_event,
             commands::spending::get_budget,
             commands::spending::upsert_budget_target,
+            commands::spending::set_budget_targets,
+            commands::spending::delete_budget_targets,
             commands::spending::delete_budget_target,
             commands::spending::upsert_budget_rollover_setting,
             commands::spending::delete_budget_rollover_setting,

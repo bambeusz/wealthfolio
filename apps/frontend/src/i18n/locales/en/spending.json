@@ -771,6 +771,7 @@
     "byCategory": "By category",
     "previousBudgetMonth": "Previous budget month",
     "nextBudgetMonth": "Next budget month",
+    "dueOn": "due day {{day}}",
     "manage": "Manage →"
   },
   "cashForm": {
@@ -907,6 +908,14 @@
     "plusMore_other": "+ {{count}} more"
   },
   "budgetEditor": {
+    "pacingLabel": "Pacing for {{name}}",
+    "pacingTitle": "When is this spent?",
+    "pacingLinear": "Spread evenly",
+    "pacingLinearHint": "Spent gradually across the month.",
+    "pacingMonthlyOnDay": "Due on day",
+    "pacingMonthlyOnDayHint": "Paid once a month. On track until this day; a day past the month's end falls on its last day.",
+    "pacingDueDay": "Due day",
+    "pacingInvalidDay": "Enter a day from 1 to 31.",
     "newGroup": "New group",
     "addGroup": "Add group",
     "resetDefaults": "Reset to defaults",

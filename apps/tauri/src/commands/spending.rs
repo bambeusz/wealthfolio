@@ -14,7 +14,8 @@ use wealthfolio_spending::analytics::{
     EventSpendingSummary, EventSummariesRequest, MonthlyReport, ReportRequest,
 };
 use wealthfolio_spending::budget::{
-    BudgetSnapshot, NewBudgetGroup, NewBudgetRolloverSetting, NewBudgetTarget, UpdateBudgetGroup,
+    BudgetSnapshot, BudgetTarget, BudgetTargetInput, NewBudgetGroup, NewBudgetRolloverSetting,
+    NewBudgetTarget, UpdateBudgetGroup,
 };
 use wealthfolio_spending::cash_activities::{
     CashActivity, CashActivityFilter, CashActivitySearchRequest, CashActivitySearchResponse,
@@ -610,6 +611,34 @@ pub async fn upsert_budget_target(
         .upsert_target(target, period_key, &base_currency, &timezone)
         .await
         .map_err(|e| format!("Failed to save budget target: {}", e))
+}
+
+#[tauri::command]
+pub async fn set_budget_targets(
+    period_key: String,
+    targets: Vec<BudgetTargetInput>,
+    state: ProfileAccess,
+) -> Result<Vec<BudgetTarget>, String> {
+    let context = state.context()?;
+    context
+        .budget_service()
+        .set_targets(&period_key, targets)
+        .await
+        .map_err(|e| format!("Failed to save budget targets: {}", e))
+}
+
+#[tauri::command]
+pub async fn delete_budget_targets(
+    period_key: String,
+    ids: Vec<String>,
+    state: ProfileAccess,
+) -> Result<(), String> {
+    let context = state.context()?;
+    context
+        .budget_service()
+        .delete_targets(&period_key, ids)
+        .await
+        .map_err(|e| format!("Failed to delete budget targets: {}", e))
 }
 
 #[tauri::command]

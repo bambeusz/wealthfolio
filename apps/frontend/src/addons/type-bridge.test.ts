@@ -432,6 +432,152 @@ describe("Addon Type Bridge", () => {
     });
   });
 
+  describe("budgets namespace", () => {
+    const budgetsGuard = (...functionNames: string[]) =>
+      createPermissionGuard("test-addon", [
+        {
+          category: "budgets",
+          purpose: "Apply an annual plan to monthly budgets",
+          functions: functionNames.map((name) => ({ name, isDeclared: true, isDetected: false })),
+        },
+      ]);
+    const loggerMocks = {
+      logError: vi.fn(),
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      logTrace: vi.fn(),
+      logDebug: vi.fn(),
+    };
+    const target = (id: string, periodKey: string) => ({
+      id,
+      periodKey,
+      targetType: "category",
+      taxonomyId: "spending_categories",
+      categoryId: "cat_groceries",
+      groupId: null,
+      amount: "300",
+      pacing: "linear",
+      dueDay: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    });
+
+    it("reads groups and one period's targets from the default snapshot", async () => {
+      const getBudget = vi.fn().mockResolvedValue({
+        state: {
+          groups: [{ id: "group-needs" }],
+          targets: [target("t-default", "default"), target("t-october", "2026-10")],
+        },
+      });
+      const sdkAPI = createSDKHostAPIBridge(
+        { getBudget, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        budgetsGuard("getGroups", "getTargets"),
+      );
+
+      expect(await sdkAPI.budgets.getGroups()).toEqual([{ id: "group-needs" }]);
+      const october = await sdkAPI.budgets.getTargets("2026-10");
+
+      expect(october.map((t) => t.id)).toEqual(["t-october"]);
+      expect(getBudget).toHaveBeenCalledWith("default");
+    });
+
+    it("maps setTargets inputs to decimal strings with the spending taxonomy by default", async () => {
+      const setBudgetTargets = vi.fn().mockResolvedValue([]);
+      const sdkAPI = createSDKHostAPIBridge(
+        { setBudgetTargets, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        budgetsGuard("setTargets"),
+      );
+
+      await sdkAPI.budgets.setTargets("2026-10", [
+        {
+          targetType: "category",
+          categoryId: "cat_housing",
+          amount: 1200,
+          pacing: "monthly_on_day",
+          dueDay: 1,
+        },
+        { targetType: "category", categoryId: "cat_groceries", amount: "450.5" },
+        { targetType: "group_buffer", groupId: "group-needs", amount: 50 },
+      ]);
+
+      expect(setBudgetTargets).toHaveBeenCalledWith("2026-10", [
+        {
+          targetType: "category",
+          taxonomyId: null,
+          categoryId: "cat_housing",
+          amount: "1200",
+          pacing: "monthly_on_day",
+          dueDay: 1,
+        },
+        {
+          targetType: "category",
+          taxonomyId: null,
+          categoryId: "cat_groceries",
+          amount: "450.5",
+          pacing: undefined,
+          dueDay: null,
+        },
+        { targetType: "group_buffer", groupId: "group-needs", amount: "50" },
+      ]);
+    });
+
+    it("forwards deleteTargets with its period", async () => {
+      const deleteBudgetTargets = vi.fn().mockResolvedValue(undefined);
+      const sdkAPI = createSDKHostAPIBridge(
+        { deleteBudgetTargets, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        budgetsGuard("deleteTargets"),
+      );
+
+      await sdkAPI.budgets.deleteTargets("2026-10", ["t-october"]);
+
+      expect(deleteBudgetTargets).toHaveBeenCalledWith("2026-10", ["t-october"]);
+    });
+
+    it("denies budget writes without the budgets permission", () => {
+      const setBudgetTargets = vi.fn();
+      const spendingOnly = createPermissionGuard("test-addon", [
+        {
+          category: "spending",
+          purpose: "Read reports",
+          functions: [{ name: "getReport", isDeclared: true, isDetected: false }],
+        },
+      ]);
+      const sdkAPI = createSDKHostAPIBridge(
+        { setBudgetTargets, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        spendingOnly,
+      );
+
+      expect(() => sdkAPI.budgets.setTargets("2026-10", [])).toThrow(
+        "Addon 'test-addon' is not allowed to call budgets.setTargets",
+      );
+      // A read-only grant does not cover writes either.
+      const readOnly = createSDKHostAPIBridge(
+        { setBudgetTargets, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        budgetsGuard("getGroups", "getTargets"),
+      );
+      expect(() => readOnly.budgets.setTargets("2026-10", [])).toThrow(
+        "Addon 'test-addon' is not allowed to call budgets.setTargets",
+      );
+      expect(setBudgetTargets).not.toHaveBeenCalled();
+    });
+
+    it("registers the budgets permission category with a medium risk level", () => {
+      const category = getPermissionCategory("budgets");
+      expect(category?.riskLevel).toBe("medium");
+      expect(category?.functions).toEqual([
+        "getGroups",
+        "getTargets",
+        "setTargets",
+        "deleteTargets",
+      ]);
+    });
+  });
+
   describe("spending namespace", () => {
     const spendingGuard = (functionName: string) =>
       createPermissionGuard("test-addon", [

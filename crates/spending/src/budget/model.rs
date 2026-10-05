@@ -1,6 +1,8 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
+use super::pacing::{BudgetPace, PaceStatus};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BudgetGroup {
@@ -109,6 +111,34 @@ impl BudgetTargetType {
     }
 }
 
+/// How a category's monthly target is expected to be spent across the month.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetPacing {
+    /// Spent gradually over the month (groceries, fuel).
+    #[default]
+    Linear,
+    /// Spent once, on `due_day` (rent, a subscription).
+    MonthlyOnDay,
+}
+
+impl BudgetPacing {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::MonthlyOnDay => "monthly_on_day",
+        }
+    }
+
+    /// Unknown values read as `Linear`, the column default.
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "monthly_on_day" => Self::MonthlyOnDay,
+            _ => Self::Linear,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BudgetTarget {
@@ -119,6 +149,12 @@ pub struct BudgetTarget {
     pub category_id: Option<String>,
     pub group_id: Option<String>,
     pub amount: String,
+    #[serde(default)]
+    pub pacing: BudgetPacing,
+    /// Day of month (1–31) for `MonthlyOnDay`; clamped to the month's length
+    /// when pacing is computed. Always `None` for `Linear`.
+    #[serde(default)]
+    pub due_day: Option<i32>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -133,6 +169,32 @@ pub struct NewBudgetTarget {
     pub category_id: Option<String>,
     pub group_id: Option<String>,
     pub amount: String,
+    /// `None` keeps the pacing already stored for this row, or — for a new
+    /// month override — inherits the category default's pacing.
+    #[serde(default)]
+    pub pacing: Option<BudgetPacing>,
+    #[serde(default)]
+    pub due_day: Option<i32>,
+}
+
+/// One target in a bulk write for a single period (see
+/// `BudgetService::set_targets`). Category targets default to the spending
+/// taxonomy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetTargetInput {
+    pub target_type: BudgetTargetType,
+    #[serde(default)]
+    pub taxonomy_id: Option<String>,
+    #[serde(default)]
+    pub category_id: Option<String>,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    pub amount: String,
+    #[serde(default)]
+    pub pacing: Option<BudgetPacing>,
+    #[serde(default)]
+    pub due_day: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +261,14 @@ pub struct BudgetCategoryRow {
     pub has_default_target: bool,
     pub has_month_override: bool,
     pub rollover_enabled: bool,
+    /// Effective pacing for this period (month override → default → linear).
+    pub pacing: BudgetPacing,
+    pub due_day: Option<i32>,
+    /// Pace of a spending row in a month view; `None` for the default
+    /// period and for income rows.
+    pub expected_to_date: Option<f64>,
+    pub projected: Option<f64>,
+    pub pace_status: Option<PaceStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +320,10 @@ pub struct BudgetSnapshotComputed {
     pub ungrouped_rows: Vec<BudgetCategoryRow>,
     pub income_rows: Vec<BudgetCategoryRow>,
     pub totals: BudgetTotals,
+    /// Month-level pace and the on-track status every surface shows; `None`
+    /// for the default period.
+    #[serde(default)]
+    pub pace: Option<BudgetPace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +350,7 @@ impl BudgetSnapshot {
                 ungrouped_rows: Vec::new(),
                 income_rows: Vec::new(),
                 totals: BudgetTotals::default(),
+                pace: None,
             },
         }
     }

@@ -15,7 +15,14 @@ and this project adheres to
   `SpendingExclusion` type. An excluded activity counts in no Spending total but
   stays in the ledger and the account balance; a linked transfer is excluded as
   a pair.
-
+- `ctx.api.budgets` (`BudgetsAPI`) — `getGroups()`, `getTargets(periodKey)`,
+  `setTargets(periodKey, targets)` and `deleteTargets(periodKey, ids)` over the
+  user's native monthly budgets, behind the new medium-risk `budgets`
+  permission. `setTargets` upserts by category or group in one transaction, so
+  it's idempotent. Adds `BudgetGroup`, `BudgetTarget`, `BudgetTargetInput`,
+  `BudgetTargetType` and `BudgetPacing`: a category target is paced `linear` or
+  `monthly_on_day` with a `dueDay`. See the
+  [Budgets API reference](../../docs/addons/addon-api-reference.md#budgets-api).
 - `NetworkRequest.timeoutSecs` for longer-running addon HTTP requests. Defaults
   to 10 seconds; positive integer values are capped server-side at 120 seconds.
 

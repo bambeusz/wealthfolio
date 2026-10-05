@@ -540,6 +540,43 @@ fn test_detect_addon_permissions_spending() {
 }
 
 #[test]
+fn test_detect_addon_permissions_budgets() {
+    let addon_files = vec![AddonFile {
+        name: "addon.js".to_string(),
+        content: r#"
+            export default async function enable(ctx) {
+                const groups = await ctx.api.budgets.getGroups();
+                await ctx.api.budgets.getTargets("2026-10");
+                await ctx.api.budgets.setTargets("2026-10", []);
+                await ctx.api.budgets.deleteTargets("2026-10", ["target-1"]);
+            }
+        "#
+        .to_string(),
+        is_main: true,
+    }];
+
+    let detected_permissions = detect_addon_permissions(&addon_files);
+    let budgets_permission = detected_permissions
+        .iter()
+        .find(|permission| permission.category == "budgets")
+        .expect("budgets permissions should be detected");
+    let detected_functions: std::collections::HashSet<&str> = budgets_permission
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+
+    assert_eq!(
+        detected_functions,
+        std::collections::HashSet::from(["getGroups", "getTargets", "setTargets", "deleteTargets"])
+    );
+    // Budget calls don't leak into the spending category.
+    assert!(detected_permissions
+        .iter()
+        .all(|permission| permission.category != "spending"));
+}
+
+#[test]
 fn test_addon_manifest_to_installed() {
     let manifest = AddonManifest {
         id: "test-addon".to_string(),

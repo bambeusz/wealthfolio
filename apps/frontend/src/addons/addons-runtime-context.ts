@@ -49,6 +49,11 @@ import {
   setActivitySpendingExclusion,
 } from "@/features/spending/adapters/cash-activities";
 import { getSpendingReport } from "@/features/spending/adapters/reports";
+import {
+  deleteBudgetTargets,
+  getBudget,
+  setBudgetTargets,
+} from "@/features/spending/adapters/budget";
 import { openCsvFileDialog, openFileSaveDialog } from "@/adapters";
 import { createGoal, getGoals, getGoalFunding, saveGoalFunding, updateGoal } from "@/adapters";
 import {
@@ -487,6 +492,10 @@ export function createAddonHostAPI(
       rerunCategorizationRulesForAddon: rerunCategorizationRules,
       listSpendingActivityExclusions,
       setActivitySpendingExclusion,
+
+      getBudget,
+      setBudgetTargets,
+      deleteBudgetTargets,
 
       getContributionLimit,
       createContributionLimit,

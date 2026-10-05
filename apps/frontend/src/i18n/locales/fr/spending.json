@@ -813,6 +813,7 @@
     "byCategory": "Par catégorie",
     "previousBudgetMonth": "Mois budgétaire précédent",
     "nextBudgetMonth": "Mois budgétaire suivant",
+    "dueOn": "dû le {{day}}",
     "manage": "Gérer →"
   },
   "cashForm": {
@@ -960,6 +961,14 @@
     "plusMore_many": "+ {{count}} de plus"
   },
   "budgetEditor": {
+    "pacingLabel": "Rythme de {{name}}",
+    "pacingTitle": "Quand est-ce dépensé ?",
+    "pacingLinear": "Répartir uniformément",
+    "pacingLinearHint": "Dépensé progressivement sur le mois.",
+    "pacingMonthlyOnDay": "Dû le jour",
+    "pacingMonthlyOnDayHint": "Payé une fois par mois. Dans les clous jusqu'à ce jour ; un jour au-delà de la fin du mois tombe sur son dernier jour.",
+    "pacingDueDay": "Jour d'échéance",
+    "pacingInvalidDay": "Saisissez un jour de 1 à 31.",
     "newGroup": "Nouveau groupe",
     "addGroup": "Ajouter un groupe",
     "resetDefaults": "Réinitialiser aux valeurs par défaut",

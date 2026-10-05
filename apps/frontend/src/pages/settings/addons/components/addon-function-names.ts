@@ -81,6 +81,12 @@ export const FUNCTION_DISPLAY_NAMES: Record<string, string> = {
   "spending.listExclusions": "See which transactions are excluded from Spending",
   "spending.setExclusion": "Exclude transactions from Spending totals",
 
+  // BudgetsAPI functions
+  "budgets.getGroups": "View your budget groups",
+  "budgets.getTargets": "View your monthly budget targets",
+  "budgets.setTargets": "Create or update monthly budget targets",
+  "budgets.deleteTargets": "Delete monthly budget targets",
+
   // ContributionLimitsAPI functions
   "contributionLimits.getAll": "View contribution limits",
   "contributionLimits.create": "Set contribution limits",

@@ -54,6 +54,11 @@ import type {
 } from "@/features/spending/types/cash-activity";
 import type { MonthlyReport, ReportRequest } from "@/features/spending/types/report";
 import type {
+  BudgetSnapshot,
+  BudgetTarget,
+  BudgetTargetInput,
+} from "@/features/spending/types/budget";
+import type {
   CategorizationRule as InternalCategorizationRule,
   NewCategorizationRule,
 } from "@/features/spending/types/rule";
@@ -63,6 +68,7 @@ import {
 } from "../adapters/shared/spending";
 import type {
   ActivityType,
+  BudgetTargetInput as SDKBudgetTargetInput,
   CategorizationRule as SDKCategorizationRule,
   CategorizationRuleInput,
   Goal as SDKGoal,
@@ -101,6 +107,23 @@ function toSDKCategorizationRule(rule: InternalCategorizationRule): SDKCategoriz
   };
 }
 
+const DEFAULT_BUDGET_PERIOD = "default";
+
+/** SDK amounts may be numbers; the host stores decimal strings. */
+function toInternalBudgetTargetInput(input: SDKBudgetTargetInput): BudgetTargetInput {
+  if (input.targetType === "group_buffer") {
+    return { targetType: "group_buffer", groupId: input.groupId, amount: String(input.amount) };
+  }
+  return {
+    targetType: "category",
+    taxonomyId: input.taxonomyId ?? null,
+    categoryId: input.categoryId,
+    amount: String(input.amount),
+    pacing: input.pacing,
+    dueDay: input.dueDay ?? null,
+  };
+}
+
 /**
  * Internal HostAPI interface that matches the actual command function signatures
  * This allows us to maintain type safety internally while providing a clean SDK interface
@@ -129,6 +152,11 @@ export interface InternalHostAPI {
   rerunCategorizationRulesForAddon(onlyUncategorized?: boolean): Promise<number>;
   listSpendingActivityExclusions(): Promise<ActivityExclusion[]>;
   setActivitySpendingExclusion(activityId: string, excluded: boolean): Promise<void>;
+
+  // Budgets
+  getBudget(periodKey?: string): Promise<BudgetSnapshot>;
+  setBudgetTargets(periodKey: string, targets: BudgetTargetInput[]): Promise<BudgetTarget[]>;
+  deleteBudgetTargets(periodKey: string, ids: string[]): Promise<void>;
 
   // Contribution limits
   getContributionLimit(): Promise<ContributionLimit[]>;
@@ -634,6 +662,23 @@ export function createSDKHostAPIBridge(
     guard,
   );
   const spending = { ...spendingCategorization, ...spendingActivities };
+  // Groups and targets come from the cheap "default" snapshot (no actuals);
+  // it holds every period's targets, so getTargets filters by period.
+  const budgets = guardNamespace(
+    {
+      getGroups: async () => (await internalAPI.getBudget(DEFAULT_BUDGET_PERIOD)).state.groups,
+      getTargets: async (periodKey: string) =>
+        (await internalAPI.getBudget(DEFAULT_BUDGET_PERIOD)).state.targets.filter(
+          (target) => target.periodKey === periodKey,
+        ),
+      setTargets: (periodKey: string, targets: SDKBudgetTargetInput[]) =>
+        internalAPI.setBudgetTargets(periodKey, targets.map(toInternalBudgetTargetInput)),
+      deleteTargets: (periodKey: string, ids: string[]) =>
+        internalAPI.deleteBudgetTargets(periodKey, ids),
+    },
+    "budgets",
+    guard,
+  );
   const contributionLimits = guardNamespace(
     {
       getAll: internalAPI.getContributionLimit,
@@ -725,6 +770,7 @@ export function createSDKHostAPIBridge(
     performance: performance as unknown as SDKApiWithoutSecrets["performance"],
     exchangeRates: exchangeRates as unknown as SDKApiWithoutSecrets["exchangeRates"],
     spending: spending as unknown as SDKApiWithoutSecrets["spending"],
+    budgets: budgets as unknown as SDKApiWithoutSecrets["budgets"],
     contributionLimits: contributionLimits as unknown as SDKApiWithoutSecrets["contributionLimits"],
     goals: goals as unknown as SDKApiWithoutSecrets["goals"],
     settings: settings as unknown as SDKApiWithoutSecrets["settings"],

@@ -1,5 +1,9 @@
 export type BudgetTargetType = "category" | "group_buffer";
 export type BudgetRolloverTargetType = "category" | "group";
+/** `linear`: spread over the month; `monthly_on_day`: spent once, on `dueDay`. */
+export type BudgetPacing = "linear" | "monthly_on_day";
+/** The one on-track status, computed by the backend (`budget::pacing`). */
+export type PaceStatus = "on_track" | "approaching" | "over";
 
 export interface BudgetGroup {
   id: string;
@@ -47,6 +51,8 @@ export interface BudgetTarget {
   categoryId: string | null;
   groupId: string | null;
   amount: string;
+  pacing: BudgetPacing;
+  dueDay: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +65,20 @@ export interface NewBudgetTarget {
   categoryId?: string | null;
   groupId?: string | null;
   amount: string;
+  /** Omit to keep the row's pacing (a new month override inherits the default's). */
+  pacing?: BudgetPacing;
+  dueDay?: number | null;
+}
+
+/** One target in a bulk write for a single period (`set_budget_targets`). */
+export interface BudgetTargetInput {
+  targetType: BudgetTargetType;
+  taxonomyId?: string | null;
+  categoryId?: string | null;
+  groupId?: string | null;
+  amount: string;
+  pacing?: BudgetPacing;
+  dueDay?: number | null;
 }
 
 export interface BudgetRolloverSetting {
@@ -102,6 +122,33 @@ export interface BudgetCategoryRow {
   hasDefaultTarget: boolean;
   hasMonthOverride: boolean;
   rolloverEnabled: boolean;
+  pacing: BudgetPacing;
+  dueDay: number | null;
+  /** Pace of a spending row in a month view; null for the default period and income rows. */
+  expectedToDate: number | null;
+  projected: number | null;
+  paceStatus: PaceStatus | null;
+}
+
+/** Month-level pace; every surface reads its status from here (or the insight's). */
+export interface BudgetPace {
+  totalDays: number;
+  elapsedDays: number;
+  live: boolean;
+  available: number;
+  spent: number;
+  expectedToDate: number;
+  fixedExpectedToDate: number;
+  flexibleExpectedToDate: number;
+  projected: number;
+  projectionReliable: boolean;
+  flexibleDailyRate: number;
+  status: PaceStatus;
+  curveSource: "history" | "linear";
+  /** Expected cumulative spend at the end of day d, at index d - 1. */
+  expectedCurve: number[];
+  /** Actual cumulative spend at the end of each elapsed day. */
+  spentCurve: number[];
 }
 
 export interface BudgetGroupRow {
@@ -145,5 +192,7 @@ export interface BudgetSnapshot {
     ungroupedRows: BudgetCategoryRow[];
     incomeRows: BudgetCategoryRow[];
     totals: BudgetTotals;
+    /** Null for the default period. */
+    pace: BudgetPace | null;
   };
 }

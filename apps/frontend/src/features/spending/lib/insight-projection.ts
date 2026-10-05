@@ -163,6 +163,12 @@ function projectBudget(insight: SpendingInsight): BudgetSnapshot {
         hasDefaultTarget: c.budget.total > 0,
         hasMonthOverride: hasOverride,
         rolloverEnabled: false,
+        // Window-level pace lives on `insight.headline.pace`; rows carry none.
+        pacing: "linear",
+        dueDay: null,
+        expectedToDate: null,
+        projected: null,
+        paceStatus: null,
       };
     });
     return {
@@ -208,6 +214,7 @@ function projectBudget(insight: SpendingInsight): BudgetSnapshot {
           0,
         ),
       },
+      pace: null,
     },
   };
 }

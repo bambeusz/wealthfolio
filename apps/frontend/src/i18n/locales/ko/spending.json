@@ -763,6 +763,7 @@
     "byCategory": "카테고리별",
     "previousBudgetMonth": "이전 예산 월",
     "nextBudgetMonth": "다음 예산 월",
+    "dueOn": "{{day}}일 납부",
     "manage": "관리 →"
   },
   "cashForm": {
@@ -898,6 +899,14 @@
     "plusMore_other": "+ {{count}} 더보기"
   },
   "budgetEditor": {
+    "pacingLabel": "{{name}} 지출 페이스",
+    "pacingTitle": "언제 지출하나요?",
+    "pacingLinear": "월중 고르게",
+    "pacingLinearHint": "한 달 동안 조금씩 지출합니다.",
+    "pacingMonthlyOnDay": "매월 납부일",
+    "pacingMonthlyOnDayHint": "한 달에 한 번 납부합니다. 이 날까지는 정상으로 보며, 말일을 넘는 날은 그 달의 마지막 날로 처리됩니다.",
+    "pacingDueDay": "납부일",
+    "pacingInvalidDay": "1에서 31 사이의 날짜를 입력하세요.",
     "newGroup": "새 그룹",
     "addGroup": "그룹 추가",
     "resetDefaults": "기본값으로 재설정",

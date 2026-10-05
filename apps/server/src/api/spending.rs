@@ -19,7 +19,8 @@ use wealthfolio_spending::analytics::{
     EventSpendingSummary, EventSummariesRequest, MonthlyReport, ReportRequest,
 };
 use wealthfolio_spending::budget::{
-    BudgetSnapshot, NewBudgetGroup, NewBudgetRolloverSetting, NewBudgetTarget, UpdateBudgetGroup,
+    BudgetSnapshot, BudgetTarget, BudgetTargetInput, NewBudgetGroup, NewBudgetRolloverSetting,
+    NewBudgetTarget, UpdateBudgetGroup,
 };
 use wealthfolio_spending::cash_activities::{
     CashActivity, CashActivityFilter, CashActivitySearchRequest, CashActivitySearchResponse,
@@ -541,6 +542,43 @@ async fn upsert_budget_target(
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetBudgetTargetsBody {
+    period_key: String,
+    targets: Vec<BudgetTargetInput>,
+}
+
+async fn set_budget_targets(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+    Json(payload): Json<SetBudgetTargetsBody>,
+) -> ApiResult<Json<Vec<BudgetTarget>>> {
+    Ok(Json(
+        state
+            .budget_service
+            .set_targets(&payload.period_key, payload.targets)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteBudgetTargetsBody {
+    period_key: String,
+    ids: Vec<String>,
+}
+
+async fn delete_budget_targets(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+    Json(payload): Json<DeleteBudgetTargetsBody>,
+) -> ApiResult<()> {
+    state
+        .budget_service
+        .delete_targets(&payload.period_key, payload.ids)
+        .await?;
+    Ok(())
+}
+
 async fn delete_budget_target(
     axum::Extension(state): axum::Extension<Arc<AppState>>,
     Query(query): Query<BudgetQuery>,
@@ -835,6 +873,11 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
         )
         .route("/spending/budget", get(get_budget))
         .route("/spending/budget/targets", post(upsert_budget_target))
+        .route("/spending/budget/targets/bulk", post(set_budget_targets))
+        .route(
+            "/spending/budget/targets/bulk-delete",
+            post(delete_budget_targets),
+        )
         .route(
             "/spending/budget/targets/{id}",
             delete(delete_budget_target),

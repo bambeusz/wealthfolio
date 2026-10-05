@@ -909,6 +909,10 @@ ctx.api.logger.debug(`Debug info: ${JSON.stringify(debugData)}`);
 | `spending.rerunRules(onlyUncategorized?)`  | Re-run categorization rules                 | `spending`            |
 | `spending.listExclusions()`                | List activities excluded from Spending      | `spending`            |
 | `spending.setExclusion(id, excluded)`      | Exclude or include an activity in Spending  | `spending`            |
+| `budgets.getGroups()`                      | List budget groups                          | `budgets`             |
+| `budgets.getTargets(periodKey)`            | List a period's budget targets              | `budgets`             |
+| `budgets.setTargets(periodKey, targets)`   | Upsert a period's targets and pacing        | `budgets`             |
+| `budgets.deleteTargets(periodKey, ids)`    | Delete a period's targets                   | `budgets`             |
 | `goals.getAll()`                           | Get financial goals                         | `financial-planning`  |
 | `contributionLimits.getAll()`              | Get contribution limits                     | `contribution-limits` |
 | `settings.get()`                           | Get application settings                    | `settings`            |

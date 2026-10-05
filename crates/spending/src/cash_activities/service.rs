@@ -2502,7 +2502,16 @@ mod tests {
         ) -> Result<crate::budget::BudgetTarget> {
             unimplemented!()
         }
+        async fn upsert_targets(
+            &self,
+            _: Vec<crate::budget::NewBudgetTarget>,
+        ) -> Result<Vec<crate::budget::BudgetTarget>> {
+            unimplemented!()
+        }
         async fn delete_target(&self, _: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn delete_targets(&self, _: Vec<String>) -> Result<()> {
             unimplemented!()
         }
         async fn list_rollover_settings(
