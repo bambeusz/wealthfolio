@@ -1142,5 +1142,14 @@
     "saveCategoryFirst": "Salva prima la categoria, poi cambia il tipo o il conto.",
     "typeNotForAccount": "Questo tipo non è disponibile per questo conto.",
     "amountRequired": "L'importo è obbligatorio."
+  },
+  "exclusion": {
+    "exclude": "Escludi dalle Spese",
+    "include": "Includi nelle Spese",
+    "badge": "Esclusa",
+    "badgeHint": "Fuori dai totali delle Spese. Conta ancora nel saldo del conto.",
+    "statusFilter": "Escluse dalle Spese",
+    "excluded": "Esclusa dalle Spese",
+    "included": "Di nuovo inclusa nelle Spese"
   }
 }

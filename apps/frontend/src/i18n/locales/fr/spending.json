@@ -1142,5 +1142,14 @@
     "saveCategoryFirst": "Enregistrez d’abord la catégorie, puis changez le type ou le compte.",
     "typeNotForAccount": "Ce type n’est pas disponible pour ce compte.",
     "amountRequired": "Le montant est requis."
+  },
+  "exclusion": {
+    "exclude": "Exclure des Dépenses",
+    "include": "Inclure dans les Dépenses",
+    "badge": "Exclue",
+    "badgeHint": "Hors des totaux de Dépenses. Compte toujours dans le solde du compte.",
+    "statusFilter": "Exclues des Dépenses",
+    "excluded": "Exclue des Dépenses",
+    "included": "De nouveau incluse dans les Dépenses"
   }
 }

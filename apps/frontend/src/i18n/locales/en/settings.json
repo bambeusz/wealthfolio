@@ -1655,6 +1655,8 @@
       "spending_saveRule": "Create or update auto-categorization rules",
       "spending_deleteRule": "Delete auto-categorization rules",
       "spending_rerunRules": "Re-apply categorization rules to your transactions",
+      "spending_listExclusions": "View transactions excluded from Spending",
+      "spending_setExclusion": "Exclude a transaction from Spending totals or include it again",
       "contributionLimits_getAll": "View contribution limits",
       "contributionLimits_create": "Set contribution limits",
       "contributionLimits_update": "Modify contribution limits",

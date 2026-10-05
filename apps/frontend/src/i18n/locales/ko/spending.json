@@ -1071,5 +1071,14 @@
     "saveCategoryFirst": "카테고리를 먼저 저장한 다음 유형이나 계좌를 변경하세요.",
     "typeNotForAccount": "이 유형은 이 계좌에서 사용할 수 없습니다.",
     "amountRequired": "금액은 필수입니다."
+  },
+  "exclusion": {
+    "exclude": "지출에서 제외",
+    "include": "지출에 포함",
+    "badge": "제외됨",
+    "badgeHint": "지출 합계에서 제외됩니다. 계좌 잔액에는 계속 반영됩니다.",
+    "statusFilter": "지출에서 제외됨",
+    "excluded": "지출에서 제외했습니다",
+    "included": "지출에 다시 포함했습니다"
   }
 }

@@ -1142,5 +1142,14 @@
     "saveCategoryFirst": "Salve primeiro a categoria e depois altere o tipo ou a conta.",
     "typeNotForAccount": "Este tipo não está disponível para esta conta.",
     "amountRequired": "O valor é obrigatório."
+  },
+  "exclusion": {
+    "exclude": "Excluir de Gastos",
+    "include": "Incluir em Gastos",
+    "badge": "Excluída",
+    "badgeHint": "Fora dos totais de Gastos. Continua contando no saldo da conta.",
+    "statusFilter": "Excluídas de Gastos",
+    "excluded": "Excluída de Gastos",
+    "included": "Incluída novamente em Gastos"
   }
 }

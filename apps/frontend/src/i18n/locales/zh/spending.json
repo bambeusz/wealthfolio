@@ -1071,5 +1071,14 @@
     "saveCategoryFirst": "请先保存类别，再修改类型或账户。",
     "typeNotForAccount": "此账户不支持该类型。",
     "amountRequired": "金额为必填项。"
+  },
+  "exclusion": {
+    "exclude": "从支出中排除",
+    "include": "计入支出",
+    "badge": "已排除",
+    "badgeHint": "不计入支出合计，但仍计入账户余额。",
+    "statusFilter": "已从支出中排除",
+    "excluded": "已从支出中排除",
+    "included": "已重新计入支出"
   }
 }

@@ -1706,6 +1706,8 @@
       "spending_saveRule": "Crear o actualizar reglas de categorización automática",
       "spending_deleteRule": "Eliminar reglas de categorización automática",
       "spending_rerunRules": "Volver a aplicar reglas de categorización a sus transacciones",
+      "spending_listExclusions": "Ver las transacciones excluidas de Gastos",
+      "spending_setExclusion": "Excluir una transacción de los totales de Gastos o volver a incluirla",
       "contributionLimits_getAll": "Ver los límites de aportación",
       "contributionLimits_create": "Establecer límites de aportación",
       "contributionLimits_update": "Modificar límites de aportación",

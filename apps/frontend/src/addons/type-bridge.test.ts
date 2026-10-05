@@ -578,6 +578,38 @@ describe("Addon Type Bridge", () => {
       expect(mockRerun).toHaveBeenCalledWith(true);
     });
 
+    it("forwards Spending exclusions under the spending permission", async () => {
+      const exclusions = [{ activityId: "activity-1", groupId: "pair-1" }];
+      const listSpendingActivityExclusions = vi.fn().mockResolvedValue(exclusions);
+      const setActivitySpendingExclusion = vi.fn().mockResolvedValue(undefined);
+      const internal = {
+        listSpendingActivityExclusions,
+        setActivitySpendingExclusion,
+        ...loggerMocks,
+      } as unknown as InternalHostAPI;
+      const guard = createPermissionGuard("test-addon", [
+        {
+          category: "spending",
+          purpose: "Exclude transfers from Spending",
+          functions: [
+            { name: "listExclusions", isDeclared: true, isDetected: false },
+            { name: "setExclusion", isDeclared: true, isDetected: false },
+          ],
+        },
+      ]);
+      const sdkAPI = createSDKHostAPIBridge(internal, "test-addon", guard);
+
+      await expect(sdkAPI.spending.listExclusions()).resolves.toEqual(exclusions);
+      await sdkAPI.spending.setExclusion("activity-1", true);
+      expect(setActivitySpendingExclusion).toHaveBeenCalledWith("activity-1", true);
+
+      const readOnly = createSDKHostAPIBridge(internal, "test-addon", spendingGuard("getReport"));
+      expect(() => readOnly.spending.setExclusion("activity-1", false)).toThrow(
+        "Addon 'test-addon' is not allowed to call spending.setExclusion",
+      );
+      expect(setActivitySpendingExclusion).toHaveBeenCalledTimes(1);
+    });
+
     it("guards and forwards aggregate reports with the spending permission", async () => {
       const getSpendingReport = vi.fn().mockResolvedValue({ current: { outflow: 120 } });
       const sdkAPI = createSDKHostAPIBridge(
@@ -674,6 +706,8 @@ describe("Addon Type Bridge", () => {
           "saveRule",
           "deleteRule",
           "rerunRules",
+          "listExclusions",
+          "setExclusion",
         ]),
       );
       expect(getPermissionCategory("activities")?.riskLevel).toBe("high");

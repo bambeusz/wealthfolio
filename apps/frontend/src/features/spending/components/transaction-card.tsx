@@ -17,6 +17,7 @@ import {
 import { ActionPalette } from "@/components/action-palette";
 
 import { CategoryIcon } from "./category-chips";
+import { ExcludedBadge } from "./excluded-badge";
 import { QuickCategorizePopover } from "./quick-categorize-popover";
 import { SelectionCheckbox } from "./selection-checkbox";
 import { QuickEventPopover } from "./quick-event-popover";
@@ -50,6 +51,8 @@ interface TransactionCardProps {
   onUnlinkTransfer?: (row: TransactionRowVM) => void;
   /** Count a withdrawal as a loan payment, or stop counting it. */
   onLoanPayment?: (row: TransactionRowVM) => void;
+  /** Flips the row's "Exclude from Spending" switch. */
+  onToggleSpendingExclusion?: (row: TransactionRowVM) => void;
 }
 
 /**
@@ -81,12 +84,14 @@ function TransactionCardImpl({
   onLinkTransfer,
   onUnlinkTransfer,
   onLoanPayment,
+  onToggleSpendingExclusion,
 }: TransactionCardProps) {
   const { formatTime } = useDateFormatting();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const { t } = useTranslation();
   const a = row.activity;
+  const isExcluded = a.excludedFromSpending === true;
   const { isOutflow, isIncome, isSaving, isNeutral, sign, safeAmount } = getTransactionDisplay(
     a,
     account?.accountType,
@@ -136,19 +141,27 @@ function TransactionCardImpl({
                 needs a form that survives both a screen reader and a reader who
                 cannot separate the colours. */}
             {row.needsReview && <NeedsReviewMark label={t("spending:transactions.review")} />}
-            <span className="text-foreground min-w-0 flex-1 truncate text-sm font-medium">
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-sm font-medium",
+                isExcluded ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
               {a.notes ?? <span className="text-muted-foreground italic">—</span>}
             </span>
+            {isExcluded && <ExcludedBadge />}
             <span
               className={cn(
                 "shrink-0 text-sm font-medium tabular-nums",
-                isSaving
-                  ? "text-[#6B8E54]"
-                  : isOutflow
-                    ? "text-destructive"
-                    : isNeutral
-                      ? "text-muted-foreground"
-                      : "text-success",
+                isExcluded
+                  ? "text-muted-foreground"
+                  : isSaving
+                    ? "text-[#6B8E54]"
+                    : isOutflow
+                      ? "text-destructive"
+                      : isNeutral
+                        ? "text-muted-foreground"
+                        : "text-success",
               )}
             >
               {sign}
@@ -335,6 +348,17 @@ function TransactionCardImpl({
                         icon: Icons.Link,
                         label: t("asset:loanPayments.menu"),
                         onClick: () => onLoanPayment(row),
+                      },
+                    ]
+                  : []),
+                ...(onToggleSpendingExclusion
+                  ? [
+                      {
+                        icon: isExcluded ? Icons.Eye : Icons.EyeOff,
+                        label: isExcluded
+                          ? t("spending:exclusion.include")
+                          : t("spending:exclusion.exclude"),
+                        onClick: () => onToggleSpendingExclusion(row),
                       },
                     ]
                   : []),

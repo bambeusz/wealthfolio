@@ -129,6 +129,7 @@ function renderGrid(items: CashActivity[]) {
       onLinkTransfer={() => undefined}
       onUnlinkTransfer={() => undefined}
       onLoanPayment={() => undefined}
+      onToggleSpendingExclusion={() => undefined}
     />,
   );
 }

@@ -1706,6 +1706,8 @@
       "spending_saveRule": "Créer ou mettre à jour des règles de catégorisation automatique",
       "spending_deleteRule": "Supprimer des règles de catégorisation automatique",
       "spending_rerunRules": "Réappliquer les règles de catégorisation à vos transactions",
+      "spending_listExclusions": "Voir les transactions exclues des Dépenses",
+      "spending_setExclusion": "Exclure une transaction des totaux de Dépenses ou l'y réintégrer",
       "contributionLimits_getAll": "Consulter les plafonds de cotisation",
       "contributionLimits_create": "Définir les plafonds de cotisation",
       "contributionLimits_update": "Modifier les plafonds de cotisation",

@@ -18,6 +18,7 @@ import {
 
 import { getTransactionDisplay, type TransactionRowVM } from "../lib/transactions-helpers";
 import { CategoryIconTile } from "./category-chips";
+import { ExcludedBadge } from "./excluded-badge";
 import { QuickCategorizePopover } from "./quick-categorize-popover";
 import { QuickEventPopover } from "./quick-event-popover";
 import { TransactionRowActions } from "./transaction-row-actions";
@@ -51,6 +52,8 @@ interface TransactionRowProps {
   onUnlinkTransfer?: (row: TransactionRowVM) => void;
   /** Count a withdrawal as a loan payment, or stop counting it. */
   onLoanPayment?: (row: TransactionRowVM) => void;
+  /** Flips the row's "Exclude from Spending" switch. */
+  onToggleSpendingExclusion?: (row: TransactionRowVM) => void;
   /**
    * Virtualizer wiring: it measures the rendered row through the ref and
    * identifies it by `data-index`. Both are unset when the list renders
@@ -84,11 +87,13 @@ function TransactionRowImpl({
   onLinkTransfer,
   onUnlinkTransfer,
   onLoanPayment,
+  onToggleSpendingExclusion,
 }: TransactionRowProps) {
   const { formatTime } = useDateFormatting();
 
   const { t } = useTranslation();
   const a = row.activity;
+  const isExcluded = a.excludedFromSpending === true;
   const { isOutflow, isIncome, isSaving, isNeutral, sign, safeAmount } = getTransactionDisplay(
     a,
     account?.accountType,
@@ -132,10 +137,14 @@ function TransactionRowImpl({
         <div className="flex items-center gap-2">
           {row.needsReview && <NeedsReviewIcon label={t("spending:transactions.review")} />}
           {a.notes != null ? (
-            <TruncatedText text={a.notes} className="text-sm" />
+            <TruncatedText
+              text={a.notes}
+              className={cn("text-sm", isExcluded && "text-muted-foreground")}
+            />
           ) : (
             <span className="text-muted-foreground text-sm italic">—</span>
           )}
+          {isExcluded && <ExcludedBadge />}
           {showAccount && (
             <span className="text-muted-foreground max-w-[8rem] shrink-0 truncate text-xs">
               {accountName}
@@ -248,13 +257,15 @@ function TransactionRowImpl({
       <TableCell
         className={cn(
           "w-28 whitespace-nowrap px-3 py-2 text-end text-sm font-medium tabular-nums",
-          isSaving
-            ? "text-[#6B8E54]"
-            : isOutflow
-              ? "text-destructive"
-              : isNeutral
-                ? "text-muted-foreground"
-                : "text-success",
+          isExcluded
+            ? "text-muted-foreground"
+            : isSaving
+              ? "text-[#6B8E54]"
+              : isOutflow
+                ? "text-destructive"
+                : isNeutral
+                  ? "text-muted-foreground"
+                  : "text-success",
         )}
       >
         {sign}
@@ -279,6 +290,7 @@ function TransactionRowImpl({
           onLinkTransfer={onLinkTransfer}
           onUnlinkTransfer={onUnlinkTransfer}
           onLoanPayment={onLoanPayment}
+          onToggleSpendingExclusion={onToggleSpendingExclusion}
         />
       </TableCell>
     </TableRow>

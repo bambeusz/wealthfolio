@@ -907,6 +907,8 @@ ctx.api.logger.debug(`Debug info: ${JSON.stringify(debugData)}`);
 | `spending.saveRule(rule)`                  | Create or update an addon-owned rule        | `spending`            |
 | `spending.deleteRule(ruleKey)`             | Delete an addon-owned rule                  | `spending`            |
 | `spending.rerunRules(onlyUncategorized?)`  | Re-run categorization rules                 | `spending`            |
+| `spending.listExclusions()`                | List activities excluded from Spending      | `spending`            |
+| `spending.setExclusion(id, excluded)`      | Exclude or include an activity in Spending  | `spending`            |
 | `goals.getAll()`                           | Get financial goals                         | `financial-planning`  |
 | `contributionLimits.getAll()`              | Get contribution limits                     | `contribution-limits` |
 | `settings.get()`                           | Get application settings                    | `settings`            |

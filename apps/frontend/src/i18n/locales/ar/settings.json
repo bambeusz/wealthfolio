@@ -1859,6 +1859,8 @@
       "spending_saveRule": "إنشاء قواعد التصنيف التلقائي أو تحديثها",
       "spending_deleteRule": "حذف قواعد التصنيف التلقائي",
       "spending_rerunRules": "إعادة تطبيق قواعد التصنيف على معاملاتك",
+      "spending_listExclusions": "عرض المعاملات المستبعدة من الإنفاق",
+      "spending_setExclusion": "استبعاد معاملة من إجماليات الإنفاق أو إعادة تضمينها",
       "contributionLimits_getAll": "عرض حدود المساهمات",
       "contributionLimits_create": "تعيين حدود المساهمات",
       "contributionLimits_update": "تعديل حدود المساهمات",

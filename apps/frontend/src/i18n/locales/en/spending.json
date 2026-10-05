@@ -1083,5 +1083,14 @@
     "saveCategoryFirst": "Save the category first, then change the type or account.",
     "typeNotForAccount": "This type isn't available for this account.",
     "amountRequired": "Amount is required."
+  },
+  "exclusion": {
+    "exclude": "Exclude from Spending",
+    "include": "Include in Spending",
+    "badge": "Excluded",
+    "badgeHint": "Left out of Spending totals. Still counts in the account balance.",
+    "statusFilter": "Excluded from Spending",
+    "excluded": "Excluded from Spending",
+    "included": "Included in Spending again"
   }
 }

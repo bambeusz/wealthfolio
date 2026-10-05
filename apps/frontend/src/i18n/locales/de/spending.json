@@ -1083,5 +1083,14 @@
     "saveCategoryFirst": "Speichern Sie zuerst die Kategorie und ändern Sie dann Typ oder Konto.",
     "typeNotForAccount": "Dieser Typ ist für dieses Konto nicht verfügbar.",
     "amountRequired": "Ein Betrag ist erforderlich."
+  },
+  "exclusion": {
+    "exclude": "Aus Ausgaben ausschließen",
+    "include": "In Ausgaben einbeziehen",
+    "badge": "Ausgeschlossen",
+    "badgeHint": "Nicht in den Ausgaben-Summen. Zählt weiterhin im Kontostand.",
+    "statusFilter": "Aus Ausgaben ausgeschlossen",
+    "excluded": "Aus Ausgaben ausgeschlossen",
+    "included": "Wieder in Ausgaben einbezogen"
   }
 }

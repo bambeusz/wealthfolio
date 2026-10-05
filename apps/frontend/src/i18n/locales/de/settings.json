@@ -1655,6 +1655,8 @@
       "spending_saveRule": "Regeln zur automatischen Kategorisierung erstellen oder aktualisieren",
       "spending_deleteRule": "Regeln zur automatischen Kategorisierung löschen",
       "spending_rerunRules": "Kategorisierungsregeln erneut auf Ihre Transaktionen anwenden",
+      "spending_listExclusions": "Von Ausgaben ausgeschlossene Transaktionen anzeigen",
+      "spending_setExclusion": "Eine Transaktion aus den Ausgabensummen ausschließen oder wieder einbeziehen",
       "contributionLimits_getAll": "Beitragsgrenzen anzeigen",
       "contributionLimits_create": "Beitragsgrenzen festlegen",
       "contributionLimits_update": "Beitragsgrenzen ändern",

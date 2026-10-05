@@ -362,6 +362,14 @@ The app does not use them; they are removed in the next major SDK version.
 
 ### Added
 
+- `SpendingAPI.listExclusions()` and
+  `SpendingAPI.setExclusion(activityId, excluded)` to read and set the
+  per-activity "Exclude from Spending" switch (`spending` permission), plus
+  `CashActivity.excludedFromSpending`, the `'excluded'` status filter and the
+  `SpendingExclusion` type. An excluded activity counts in no Spending total but
+  stays in the ledger and the account balance; a linked transfer is excluded as
+  a pair.
+
 - `NetworkRequest.timeoutSecs` for longer-running addon HTTP requests. Defaults
   to 10 seconds; positive integer values are capped server-side at 120 seconds.
 - `SpendingAPI.getReport()` and `SpendingAPI.searchCashActivities()` for

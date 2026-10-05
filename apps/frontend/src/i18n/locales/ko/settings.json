@@ -1628,6 +1628,8 @@
       "spending_saveRule": "자동 분류 규칙 만들기 또는 업데이트",
       "spending_deleteRule": "자동 분류 규칙 삭제",
       "spending_rerunRules": "거래에 분류 규칙 다시 적용",
+      "spending_listExclusions": "지출에서 제외된 거래 보기",
+      "spending_setExclusion": "거래를 지출 합계에서 제외하거나 다시 포함",
       "contributionLimits_getAll": "납입 한도 보기",
       "contributionLimits_create": "납입 한도 설정",
       "contributionLimits_update": "납입 한도 수정",

@@ -44,7 +44,9 @@ import {
   upsertCategorizationRule,
 } from "@/adapters";
 import {
+  listSpendingActivityExclusions,
   searchCashActivities,
+  setActivitySpendingExclusion,
   assignActivityCategory,
   unassignActivityCategory,
   setActivityEvent,
@@ -497,6 +499,8 @@ export function createAddonHostAPI(
       upsertCategorizationRule,
       deleteCategorizationRuleById: deleteCategorizationRule,
       rerunCategorizationRulesForAddon: rerunCategorizationRules,
+      listSpendingActivityExclusions,
+      setActivitySpendingExclusion,
 
       getContributionLimit,
       createContributionLimit,

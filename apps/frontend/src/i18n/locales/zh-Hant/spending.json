@@ -1083,5 +1083,14 @@
     "saveCategoryFirst": "請先儲存類別，再修改類型或帳戶。",
     "typeNotForAccount": "此帳戶不支援該類型。",
     "amountRequired": "金額為必填欄位。"
+  },
+  "exclusion": {
+    "exclude": "從支出中排除",
+    "include": "計入支出",
+    "badge": "已排除",
+    "badgeHint": "不計入支出總計，但仍計入帳戶餘額。",
+    "statusFilter": "已從支出中排除",
+    "excluded": "已從支出中排除",
+    "included": "已重新計入支出"
   }
 }

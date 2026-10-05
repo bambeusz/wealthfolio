@@ -380,6 +380,8 @@ export const ALLOWED_API_METHODS = new Set([
   "spending.saveRule",
   "spending.deleteRule",
   "spending.rerunRules",
+  "spending.listExclusions",
+  "spending.setExclusion",
   "contributionLimits.getAll",
   "contributionLimits.create",
   "contributionLimits.update",

@@ -8,6 +8,7 @@ use wealthfolio_core::activities::Activity;
 use wealthfolio_spending::activity_assignments::{
     ActivityTaxonomyAssignment, BulkCategoryAssignment,
 };
+use wealthfolio_spending::activity_exclusions::ActivityExclusion;
 use wealthfolio_spending::activity_splits::{ActivitySplit, NewActivitySplit};
 use wealthfolio_spending::analytics::{
     EventSpendingSummary, EventSummariesRequest, MonthlyReport, ReportRequest,
@@ -187,6 +188,32 @@ pub async fn set_activity_event(
         .set_event(&activity_id, event_id)
         .await
         .map_err(|e| format!("Failed to set activity event: {}", e))
+}
+
+#[tauri::command]
+pub async fn set_activity_spending_exclusion(
+    activity_id: String,
+    excluded: bool,
+    state: ProfileAccess,
+) -> Result<(), String> {
+    let context = state.context()?;
+    context
+        .cash_activity_service()
+        .set_excluded(&activity_id, excluded)
+        .await
+        .map_err(|e| format!("Failed to update spending exclusion: {}", e))
+}
+
+#[tauri::command]
+pub async fn list_spending_activity_exclusions(
+    state: ProfileAccess,
+) -> Result<Vec<ActivityExclusion>, String> {
+    let context = state.context()?;
+    context
+        .cash_activity_service()
+        .list_exclusions()
+        .await
+        .map_err(|e| format!("Failed to list spending exclusions: {}", e))
 }
 
 #[tauri::command]

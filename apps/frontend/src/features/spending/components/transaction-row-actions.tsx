@@ -33,6 +33,8 @@ export interface TransactionRowActionsProps {
   onUnlinkTransfer?: (row: TransactionRowVM) => void;
   /** Count a withdrawal as a loan payment, or stop counting it. */
   onLoanPayment?: (row: TransactionRowVM) => void;
+  /** Exclude the row from Spending totals, or include it again. */
+  onToggleSpendingExclusion?: (row: TransactionRowVM) => void;
   /** Classes for the menu button; the list shows it on row hover. */
   triggerClassName?: string;
 }
@@ -49,10 +51,12 @@ export function TransactionRowActions({
   onLinkTransfer,
   onUnlinkTransfer,
   onLoanPayment,
+  onToggleSpendingExclusion,
   triggerClassName = cn("data-popup-open:opacity-100 h-7 w-7", HOVER_SLOT),
 }: TransactionRowActionsProps) {
   const { t } = useTranslation();
   const a = row.activity;
+  const isExcluded = a.excludedFromSpending === true;
   const { isIncome, isNeutral } = getTransactionDisplay(a, account?.accountType);
   const activityType = getEffectiveCashActivityType(a);
   const isTransfer = isTransferCashActivity(a);
@@ -117,6 +121,16 @@ export function TransactionRowActions({
           <DropdownMenuItem onClick={() => onLoanPayment(row)}>
             <Icons.Link className="me-2 h-4 w-4" aria-hidden="true" />
             {t("asset:loanPayments.menu")}
+          </DropdownMenuItem>
+        )}
+        {onToggleSpendingExclusion && (
+          <DropdownMenuItem onClick={() => onToggleSpendingExclusion(row)}>
+            {isExcluded ? (
+              <Icons.Eye className="me-2 h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Icons.EyeOff className="me-2 h-4 w-4" aria-hidden="true" />
+            )}
+            {isExcluded ? t("spending:exclusion.include") : t("spending:exclusion.exclude")}
           </DropdownMenuItem>
         )}
         <DropdownMenuItem className="text-destructive" onClick={() => onDelete(row)}>

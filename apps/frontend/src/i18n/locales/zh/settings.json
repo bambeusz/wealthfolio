@@ -1628,6 +1628,8 @@
       "spending_saveRule": "创建或更新自动分类规则",
       "spending_deleteRule": "删除自动分类规则",
       "spending_rerunRules": "对交易重新应用分类规则",
+      "spending_listExclusions": "查看从支出中排除的交易",
+      "spending_setExclusion": "将交易从支出总额中排除或重新计入",
       "contributionLimits_getAll": "查看供款额度",
       "contributionLimits_create": "设置供款额度",
       "contributionLimits_update": "修改供款额度",

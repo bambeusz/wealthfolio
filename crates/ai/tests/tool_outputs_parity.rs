@@ -714,6 +714,7 @@ fn fixture_cash_activity(
         visible_spending_amount: 0.0,
         cash_balance: None,
         cash_balance_currency: None,
+        excluded_from_spending: false,
     }
 }
 

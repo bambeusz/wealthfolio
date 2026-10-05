@@ -205,6 +205,7 @@ vi.mock("../hooks/use-cash-activities", () => ({
   useReplaceActivitySplits: () => mocks.mutation,
   useClearActivitySplits: () => mocks.mutation,
   useSetActivityEvent: () => mocks.mutation,
+  useSetActivitySpendingExclusion: () => mocks.mutation,
 }));
 vi.mock("../hooks/use-spending-events", () => ({
   useSpendingEvents: () => ({ data: [] }),
