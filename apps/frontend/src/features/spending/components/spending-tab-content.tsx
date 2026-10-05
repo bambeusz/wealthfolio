@@ -1614,7 +1614,7 @@ const CategoryTreemapNodeMono: FC<CategoryTreemapNodeMonoProps> = ({
   );
 };
 
-function CategoryRankedBar({
+export function CategoryRankedBar({
   rows,
   total,
   currency,
@@ -1800,13 +1800,19 @@ function CategoryRankedBar({
                 className="block h-2.5 w-2.5 shrink-0 rounded-sm"
                 style={{ backgroundColor: color, opacity: 0.85 - i * 0.05 }}
               />
-              <span className="text-foreground/90 min-w-0 flex-1 truncate text-xs font-medium">
+              <span
+                className="text-foreground/90 min-w-0 flex-1 truncate text-xs font-medium"
+                title={r.name}
+              >
                 {r.name}
               </span>
-              <span className="text-muted-foreground/70 text-2xs w-12 text-end tabular-nums">
+              <span className="text-muted-foreground/70 text-2xs w-12 shrink-0 text-end tabular-nums">
                 {numberFormatting.formatPercent(share / 100, { digits: 1 })}
               </span>
-              <span className="text-foreground w-24 text-end text-xs font-semibold tabular-nums">
+              <span
+                className="text-foreground min-w-24 shrink-0 text-end text-xs font-semibold whitespace-nowrap tabular-nums"
+                title={isBalanceHidden ? undefined : formatting.formatAmount(r.amount, currency)}
+              >
                 <PrivacyAmount value={r.amount} currency={currency} />
               </span>
             </Link>
@@ -1818,13 +1824,21 @@ function CategoryRankedBar({
             className="border-border/60 hover:bg-muted/40 mt-1 flex items-center gap-2.5 rounded-md border border-dashed px-2 py-1.5 transition-colors"
           >
             <Icons.AlertCircle className="text-muted-foreground h-3 w-3 shrink-0" />
-            <span className="text-foreground/80 min-w-0 flex-1 text-xs font-medium">
+            <span
+              className="text-foreground/80 min-w-0 flex-1 text-xs font-medium"
+              title={t("spending:tabContent.uncategorizedImprove")}
+            >
               {t("spending:tabContent.uncategorizedImprove")}
             </span>
-            <span className="text-muted-foreground/70 text-2xs w-12 text-end tabular-nums">
+            <span className="text-muted-foreground/70 text-2xs w-12 shrink-0 text-end tabular-nums">
               {numberFormatting.formatPercent(uncategorizedShare / 100, { digits: 1 })}
             </span>
-            <span className="text-foreground w-24 text-end text-xs font-semibold tabular-nums">
+            <span
+              className="text-foreground min-w-24 shrink-0 text-end text-xs font-semibold whitespace-nowrap tabular-nums"
+              title={
+                isBalanceHidden ? undefined : formatting.formatAmount(uncategorizedAmount, currency)
+              }
+            >
               <PrivacyAmount value={uncategorizedAmount} currency={currency} />
             </span>
           </Link>
@@ -1840,7 +1854,7 @@ function CategoryRankedBar({
   );
 }
 
-function GroupedCategoryBlock({
+export function GroupedCategoryBlock({
   bucket,
   total,
   currency,
@@ -1861,6 +1875,8 @@ function GroupedCategoryBlock({
 }) {
   const { t } = useTranslation();
   const numberFormatting = useNumberFormatting();
+  const formatting = useAmountFormatting();
+  const { isBalanceHidden } = useBalancePrivacy();
   const [expanded, setExpanded] = useState(false);
   const share = total > 0 ? (bucket.total / total) * 100 : 0;
   const accent = bucket.color ?? themeColor;
@@ -1894,13 +1910,19 @@ function GroupedCategoryBlock({
           className="block h-2.5 w-2.5 shrink-0 rounded-sm"
           style={{ backgroundColor: accent }}
         />
-        <span className="text-foreground min-w-0 flex-1 truncate text-start text-xs font-semibold tracking-wide uppercase">
+        <span
+          className="text-foreground min-w-0 flex-1 truncate text-start text-xs font-semibold tracking-wide uppercase"
+          title={getBudgetGroupLabel(t, bucket.id, bucket.name)}
+        >
           {getBudgetGroupLabel(t, bucket.id, bucket.name)}
         </span>
-        <span className="text-muted-foreground/80 text-2xs w-12 text-end font-medium tabular-nums">
+        <span className="text-muted-foreground/80 text-2xs w-12 shrink-0 text-end font-medium tabular-nums">
           {numberFormatting.formatPercent(share / 100, { digits: 1 })}
         </span>
-        <span className="text-foreground w-24 text-end text-xs font-semibold tabular-nums">
+        <span
+          className="text-foreground min-w-24 shrink-0 text-end text-xs font-semibold whitespace-nowrap tabular-nums"
+          title={isBalanceHidden ? undefined : formatting.formatAmount(bucket.total, currency)}
+        >
           <PrivacyAmount value={bucket.total} currency={currency} />
         </span>
       </button>
@@ -1926,13 +1948,19 @@ function GroupedCategoryBlock({
                     "min-w-0 flex-1 truncate text-xs font-medium",
                     isUncategorized ? "text-muted-foreground/90 italic" : "text-foreground/90",
                   )}
+                  title={cat.name}
                 >
                   {cat.name}
                 </span>
-                <span className="text-muted-foreground/70 text-2xs w-12 text-end tabular-nums">
+                <span className="text-muted-foreground/70 text-2xs w-12 shrink-0 text-end tabular-nums">
                   {numberFormatting.formatPercent(catShare / 100, { digits: 1 })}
                 </span>
-                <span className="text-foreground w-24 text-end text-xs font-medium tabular-nums">
+                <span
+                  className="text-foreground min-w-24 shrink-0 text-end text-xs font-medium whitespace-nowrap tabular-nums"
+                  title={
+                    isBalanceHidden ? undefined : formatting.formatAmount(cat.amount, currency)
+                  }
+                >
                   <PrivacyAmount value={cat.amount} currency={currency} />
                 </span>
               </Link>
