@@ -403,6 +403,97 @@ mod tests {
         assert!(scope.account_ids.is_empty());
     }
 
+    fn aggregate_flag_service() -> PortfolioService {
+        let mut left_out_of_net_worth =
+            mock_account("a1", account_types::SECURITIES, TrackingMode::Transactions);
+        left_out_of_net_worth.meta =
+            Some(r#"{"portfolio":{"includeInNetWorth":false}}"#.to_string());
+        let mut left_out_of_performance =
+            mock_account("a2", account_types::SECURITIES, TrackingMode::Transactions);
+        left_out_of_performance.meta =
+            Some(r#"{"portfolio":{"includeInPerformance":false}}"#.to_string());
+        PortfolioService::new(
+            Arc::new(MockPortfolioRepo::default()),
+            Arc::new(MockAccountRepo::with_accounts(vec![
+                left_out_of_net_worth,
+                left_out_of_performance,
+            ])),
+        )
+    }
+
+    #[tokio::test]
+    async fn aggregate_scope_all_drops_accounts_left_out_for_the_purpose() {
+        let svc = aggregate_flag_service();
+
+        let holdings = svc
+            .resolve_aggregate_scope(&AccountScope::All, "USD", AccountPurpose::Holdings)
+            .unwrap();
+        assert_eq!(holdings.scope_id, "all");
+        assert_eq!(holdings.account_ids, vec!["a2"]);
+
+        let performance = svc
+            .resolve_aggregate_scope(&AccountScope::All, "USD", AccountPurpose::Performance)
+            .unwrap();
+        assert_eq!(performance.account_ids, vec!["a1"]);
+
+        // The plain resolver (snapshots, valuations, exports) still sees every account.
+        let unfiltered = svc
+            .resolve_account_scope(&AccountScope::All, "USD")
+            .unwrap();
+        assert_eq!(unfiltered.account_ids, vec!["a1", "a2"]);
+    }
+
+    #[tokio::test]
+    async fn aggregate_scope_portfolio_drops_accounts_left_out() {
+        let svc = aggregate_flag_service();
+        let resolved = svc
+            .resolve_aggregate_scope(
+                &AccountScope::Portfolio {
+                    portfolio_id: "p1".to_string(),
+                },
+                "USD",
+                AccountPurpose::Holdings,
+            )
+            .unwrap();
+        assert_eq!(resolved.account_ids, vec!["a2"]);
+    }
+
+    #[tokio::test]
+    async fn aggregate_scope_keeps_explicitly_selected_accounts() {
+        let svc = aggregate_flag_service();
+
+        let single = svc
+            .resolve_aggregate_scope(
+                &AccountScope::Account {
+                    account_id: "a1".to_string(),
+                },
+                "USD",
+                AccountPurpose::Holdings,
+            )
+            .unwrap();
+        assert_eq!(single.account_ids, vec!["a1"]);
+
+        let picked = svc
+            .resolve_aggregate_scope(
+                &AccountScope::Accounts {
+                    account_ids: vec!["a1".to_string(), "a2".to_string()],
+                },
+                "USD",
+                AccountPurpose::Performance,
+            )
+            .unwrap();
+        assert_eq!(picked.account_ids, vec!["a1", "a2"]);
+    }
+
+    #[tokio::test]
+    async fn resolve_account_scope_for_purpose_applies_aggregate_flags_to_all() {
+        let svc = aggregate_flag_service();
+        let resolved = svc
+            .resolve_account_scope_for_purpose(&AccountScope::All, "USD", AccountPurpose::Holdings)
+            .unwrap();
+        assert_eq!(resolved.account_ids, vec!["a2"]);
+    }
+
     #[tokio::test]
     async fn resolve_account_scope_for_purpose_filters_by_account_capability() {
         let mut hidden = mock_account(
