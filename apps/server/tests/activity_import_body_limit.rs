@@ -23,6 +23,7 @@ fn test_config(db_path: String, addons_root: String) -> Config {
         mcp_enabled: false,
         mcp_audit_enabled: true,
         mcp_allowed_hosts: None,
+        addon_network_private_hosts: Default::default(),
     }
 }
 

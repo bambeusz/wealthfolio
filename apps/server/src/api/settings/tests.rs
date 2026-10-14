@@ -32,6 +32,7 @@ fn test_config(root: &StdPath) -> Config {
         mcp_enabled: false,
         mcp_audit_enabled: false,
         mcp_allowed_hosts: None,
+        addon_network_private_hosts: Default::default(),
     }
 }
 
@@ -528,6 +529,7 @@ async fn a_failed_auto_update_setting_read_is_not_reported_as_enabled() {
         mcp_enabled: false,
         mcp_audit_enabled: false,
         mcp_allowed_hosts: None,
+        addon_network_private_hosts: Default::default(),
     })
     .await
     .unwrap();

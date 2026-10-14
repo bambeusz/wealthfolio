@@ -26,6 +26,7 @@ fn test_config(root: &Path) -> Config {
         mcp_enabled: false,
         mcp_audit_enabled: true,
         mcp_allowed_hosts: None,
+        addon_network_private_hosts: Default::default(),
     }
 }
 

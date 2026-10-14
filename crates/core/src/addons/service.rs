@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -2293,6 +2293,8 @@ pub struct AddonService {
     /// Manifests of addons served by a local dev server, keyed by addon id.
     /// Only populated in debug builds; never persisted.
     dev_manifests: RwLock<HashMap<String, AddonManifest>>,
+    /// Operator-listed hostnames whose brokered requests may reach private-range addresses.
+    network_private_hosts: HashSet<String>,
 }
 
 impl AddonService {
@@ -2308,7 +2310,15 @@ impl AddonService {
             package_access: RwLock::new(()),
             asset_indexes: Mutex::new(HashMap::new()),
             dev_manifests: RwLock::new(HashMap::new()),
+            network_private_hosts: HashSet::new(),
         }
+    }
+
+    /// Lets brokered requests to these exact hostnames resolve to private-range
+    /// addresses. Loopback, link-local and metadata addresses stay blocked.
+    pub fn with_network_private_hosts(mut self, hosts: HashSet<String>) -> Self {
+        self.network_private_hosts = hosts;
+        self
     }
 
     /// Registers the manifest of an addon loaded from a dev server so brokered
@@ -3285,7 +3295,13 @@ impl AddonServiceTrait for AddonService {
                         .network
                         .map(|network| network.approved_hosts)
                         .unwrap_or_default();
-                    perform_addon_network_request(addon_id, &approved_hosts, request.clone()).await
+                    perform_addon_network_request(
+                        addon_id,
+                        &approved_hosts,
+                        &self.network_private_hosts,
+                        request.clone(),
+                    )
+                    .await
                 }
             }
             Err(error) => Err(error),
