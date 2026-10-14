@@ -303,6 +303,7 @@ mod tests {
             mcp_enabled: false,
             mcp_audit_enabled: false,
             mcp_allowed_hosts: None,
+            addon_network_private_hosts: Default::default(),
         }
     }
 

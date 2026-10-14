@@ -20,6 +20,7 @@ fn test_config(db_path: String, addons_root: String) -> Config {
         request_timeout: Duration::from_secs(30),
         static_dir: "dist".to_string(),
         addons_root,
+        addon_network_private_hosts: Default::default(),
         raw_secret_key: vec![7; 32],
         secrets_encryption_key: [7; 32],
         database_key: [9; 32],

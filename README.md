@@ -442,6 +442,9 @@ All configuration is done via environment variables in `.env.web`.
     the audit log (default: `true`)
   - `WF_MCP_ALLOWED_HOSTS` - **Optional** comma-separated `Host` header values
     accepted on `/mcp`. Unset disables the check; access tokens remain required.
+- `WF_ADDON_NETWORK_PRIVATE_HOSTS` - **Optional** comma-separated hostnames that
+  addon network requests may reach on private addresses; see
+  [Addon access to LAN services](docs/self-host/README.md#addon-access-to-lan-services)
 
 **Vite Configuration**:
 

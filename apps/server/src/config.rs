@@ -1,4 +1,4 @@
-use std::{ffi::OsString, net::SocketAddr, time::Duration};
+use std::{collections::HashSet, ffi::OsString, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 
@@ -6,6 +6,9 @@ use crate::auth::{
     decode_secret_key, derive_database_key, derive_keys, AuthConfig, CookieSecurePolicy,
 };
 use crate::oidc::OidcConfig;
+use wealthfolio_core::addons::network::{
+    parse_addon_network_private_hosts, ADDON_NETWORK_PRIVATE_HOSTS_ENV,
+};
 
 #[derive(Clone)]
 pub struct Config {
@@ -15,6 +18,10 @@ pub struct Config {
     pub request_timeout: Duration,
     pub static_dir: String,
     pub addons_root: String,
+    /// Exact hostnames whose addon network requests may resolve to private-range
+    /// addresses (WF_ADDON_NETWORK_PRIVATE_HOSTS, comma-separated). Empty keeps
+    /// every private address blocked.
+    pub addon_network_private_hosts: HashSet<String>,
     /// Raw master key (used only for secret-store migration from old raw key)
     pub raw_secret_key: Vec<u8>,
     /// HKDF-derived key for secrets encryption
@@ -87,6 +94,9 @@ impl Config {
                 .to_string_lossy()
                 .into_owned()
         });
+        let addon_network_private_hosts = std::env::var(ADDON_NETWORK_PRIVATE_HOSTS_ENV)
+            .map(|raw| parse_addon_network_private_hosts(&raw))
+            .unwrap_or_default();
         let password_hash = std::env::var("WF_AUTH_PASSWORD_HASH")
             .ok()
             .map(|hash| hash.trim().to_string())
@@ -194,6 +204,7 @@ impl Config {
             request_timeout: Duration::from_millis(timeout_ms),
             static_dir,
             addons_root,
+            addon_network_private_hosts,
             raw_secret_key,
             secrets_encryption_key,
             auth,

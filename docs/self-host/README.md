@@ -594,6 +594,32 @@ Keep a secure copy of the master key alongside your recovery plan. Restoring
 `secrets.json` or an encrypted database backup requires the key that protected
 that backup. Do not discard keys still needed by retained backups.
 
+## Addon access to LAN services
+
+Addon network requests (`ctx.api.network.request`) are blocked from private
+addresses by default. To let addons reach a service on your LAN or VPN, list its
+hostname:
+
+| Variable                         | Purpose                                                                                                                                                                      |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WF_ADDON_NETWORK_PRIVATE_HOSTS` | Comma-separated exact hostnames, e.g. `bank-broker.home.example`, whose addon requests may resolve to private addresses. Unset or empty keeps every private address blocked. |
+
+Entries are trimmed, lowercased and stripped of a trailing dot. Wildcards and IP
+literals are ignored; list the name the service is reached by. The variable is
+read at startup, so restart after changing it. The desktop app reads the same
+variable from its environment.
+
+A listed host may resolve to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and
+`fc00::/7`. Loopback, link-local (including the `169.254.169.254` metadata
+address), unspecified, broadcast and documentation addresses stay blocked, as do
+`localhost`, `*.localhost` and `*.local` names. HTTPS, manifest declaration and
+user approval are still required.
+
+> **Security note:** listing a host lets any approved addon that declares it in
+> `network.allowedHosts` reach that LAN service. Anyone who controls DNS for the
+> listed name can point it at another private address. List only names you
+> trust.
+
 ## Platform pointers
 
 - [**Docker / Docker Compose**](https://wealthfolio.app/docs/guide/self-hosting):

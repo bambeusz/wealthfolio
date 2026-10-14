@@ -58,6 +58,7 @@ fn test_config(path: &std::path::Path) -> Config {
         request_timeout: Duration::from_secs(30),
         static_dir: "dist".into(),
         addons_root: path.to_string_lossy().into_owned(),
+        addon_network_private_hosts: Default::default(),
         raw_secret_key: vec![7; 32],
         secrets_encryption_key: [7; 32],
         database_key: [9; 32],

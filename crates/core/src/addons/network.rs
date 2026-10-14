@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
@@ -19,6 +19,31 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BODY_BYTES: usize = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 const MAX_REQUEST_TIMEOUT_SECS: u64 = 120;
+
+/// Operator setting listing hostnames whose addon requests may reach private-range
+/// addresses. Read once at startup by the server and desktop runtimes.
+pub const ADDON_NETWORK_PRIVATE_HOSTS_ENV: &str = "WF_ADDON_NETWORK_PRIVATE_HOSTS";
+
+/// Parses the comma-separated private-host allowlist into exact, normalised hostnames.
+///
+/// Entries are normalised like manifest `allowedHosts`. IP literals and wildcards are
+/// dropped: the exemption is granted to a name the operator trusts, never to an address
+/// or a pattern.
+pub fn parse_addon_network_private_hosts(raw: &str) -> HashSet<String> {
+    let mut hosts = HashSet::new();
+    for entry in raw.split(',') {
+        let host = entry.trim().trim_end_matches('.').to_ascii_lowercase();
+        if host.is_empty() {
+            continue;
+        }
+        if parse_ip_host(&host).is_ok() || host.contains('*') {
+            log::warn!("Ignoring {ADDON_NETWORK_PRIVATE_HOSTS_ENV} entry '{host}': only exact hostnames are supported");
+            continue;
+        }
+        hosts.insert(host);
+    }
+    hosts
+}
 
 fn validate_addon_runtime_id(addon_id: &str) -> Result<(), String> {
     validate_addon_id(&addon_id.to_ascii_lowercase())
@@ -58,6 +83,7 @@ pub struct AddonNetworkResponse {
 pub async fn perform_addon_network_request(
     addon_id: &str,
     allowed_hosts: &[String],
+    private_hosts: &HashSet<String>,
     request: AddonNetworkRequest,
 ) -> Result<AddonNetworkResponse, String> {
     validate_addon_runtime_id(addon_id)?;
@@ -67,7 +93,7 @@ pub async fn perform_addon_network_request(
         .host_str()
         .ok_or_else(|| "Addon network URL must include a host".to_string())?
         .to_string();
-    let resolved_addresses = resolve_public_addresses(&url).await?;
+    let resolved_addresses = resolve_public_addresses(&url, private_hosts).await?;
     let method = validate_method(request.method.as_deref().unwrap_or("GET"))?;
     let body = request.body.unwrap_or_default();
     if body.len() > MAX_REQUEST_BODY_BYTES {
@@ -255,26 +281,36 @@ fn parse_ip_host(host: &str) -> Result<IpAddr, std::net::AddrParseError> {
 }
 
 fn is_blocked_ip(ip: IpAddr) -> bool {
+    is_always_blocked_ip(ip) || is_private_range_ip(ip)
+}
+
+/// Addresses no addon request may reach, even for an operator-listed private host.
+fn is_always_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
-            ip.is_private()
-                || ip.is_loopback()
+            ip.is_loopback()
                 || ip.is_link_local()
                 || ip.is_broadcast()
                 || ip.is_documentation()
                 || ip.is_unspecified()
                 || ip.octets() == [169, 254, 169, 254]
         }
-        IpAddr::V6(ip) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-        }
+        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified() || ip.is_unicast_link_local(),
     }
 }
 
-async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> {
+/// LAN ranges, reachable only through hosts listed in `WF_ADDON_NETWORK_PRIVATE_HOSTS`.
+fn is_private_range_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip.is_private(),
+        IpAddr::V6(ip) => ip.is_unique_local(),
+    }
+}
+
+async fn resolve_public_addresses(
+    url: &Url,
+    private_hosts: &HashSet<String>,
+) -> Result<Vec<SocketAddr>, String> {
     let host = url
         .host_str()
         .ok_or_else(|| "Addon network URL must include a host".to_string())?;
@@ -293,9 +329,20 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
         .await
         .map_err(|_| "Addon network host could not be resolved".to_string())?;
 
+    // The exemption follows the requested name, never the resolved address.
+    let private_host_allowed =
+        private_hosts.contains(&host.trim_end_matches('.').to_ascii_lowercase());
+    check_resolved_addresses(addresses, private_host_allowed)
+}
+
+fn check_resolved_addresses(
+    addresses: impl IntoIterator<Item = SocketAddr>,
+    private_host_allowed: bool,
+) -> Result<Vec<SocketAddr>, String> {
     let mut resolved = Vec::new();
     for address in addresses {
-        if is_blocked_ip(address.ip()) {
+        let ip = address.ip();
+        if is_always_blocked_ip(ip) || (!private_host_allowed && is_private_range_ip(ip)) {
             return Err("Addon network host resolves to a private address".to_string());
         }
         resolved.push(address);
@@ -414,6 +461,7 @@ mod tests {
             perform_addon_network_request(
                 "example-addon",
                 &["api.example.invalid".into()],
+                &HashSet::new(),
                 request
             )
             .await
@@ -502,6 +550,166 @@ mod tests {
         assert!(is_blocked_ip("fd00::1".parse().unwrap()));
         assert!(!is_blocked_ip("8.8.8.8".parse().unwrap()));
         assert!(!is_blocked_ip("2606:4700:4700::1111".parse().unwrap()));
+    }
+
+    fn answers(ips: &[&str]) -> Vec<SocketAddr> {
+        ips.iter()
+            .map(|ip| SocketAddr::new(ip.parse().unwrap(), 443))
+            .collect()
+    }
+
+    fn private_request(url: &str) -> AddonNetworkRequest {
+        serde_json::from_value(serde_json::json!({ "url": url })).unwrap()
+    }
+
+    #[test]
+    fn splits_blocked_addresses_into_always_and_private_ranges() {
+        for ip in ["10.0.0.1", "172.16.0.1", "192.168.1.10", "fd00::1"] {
+            let ip = ip.parse().unwrap();
+            assert!(is_private_range_ip(ip) && !is_always_blocked_ip(ip));
+        }
+        for ip in [
+            "127.0.0.1",
+            "169.254.169.254",
+            "169.254.1.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "192.0.2.1",
+            "::1",
+            "::",
+            "fe80::1",
+        ] {
+            let ip = ip.parse().unwrap();
+            assert!(is_always_blocked_ip(ip) && !is_private_range_ip(ip));
+        }
+        for ip in ["8.8.8.8", "2606:4700:4700::1111"] {
+            let ip = ip.parse().unwrap();
+            assert!(!is_always_blocked_ip(ip) && !is_private_range_ip(ip));
+        }
+    }
+
+    #[test]
+    fn rejects_unlisted_host_resolving_to_private_address() {
+        assert_eq!(
+            check_resolved_addresses(answers(&["192.168.10.200"]), false).unwrap_err(),
+            "Addon network host resolves to a private address"
+        );
+        assert!(check_resolved_addresses(answers(&["8.8.8.8"]), false).is_ok());
+    }
+
+    #[test]
+    fn allows_listed_host_resolving_to_private_ranges() {
+        for ip in ["192.168.10.200", "10.1.2.3", "172.16.0.5", "fd00::1"] {
+            assert_eq!(
+                check_resolved_addresses(answers(&[ip]), true).unwrap(),
+                answers(&[ip])
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_listed_host_resolving_to_always_blocked_addresses() {
+        for ip in ["127.0.0.1", "::1", "169.254.169.254", "fe80::1"] {
+            assert_eq!(
+                check_resolved_addresses(answers(&[ip]), true).unwrap_err(),
+                "Addon network host resolves to a private address"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_listed_host_with_mixed_private_and_loopback_answers() {
+        assert!(check_resolved_addresses(answers(&["192.168.10.200", "127.0.0.1"]), true).is_err());
+        assert!(check_resolved_addresses(answers(&["127.0.0.1", "192.168.10.200"]), true).is_err());
+    }
+
+    #[test]
+    fn parses_private_hosts_like_allowed_hosts() {
+        let hosts = parse_addon_network_private_hosts(
+            " Bank-Broker.Home.Example. ,, other.lan.example ,192.168.1.10,[fd00::1],fd00::2,*.lan.example",
+        );
+        assert_eq!(
+            hosts,
+            HashSet::from([
+                "bank-broker.home.example".to_string(),
+                "other.lan.example".to_string(),
+            ])
+        );
+        assert!(parse_addon_network_private_hosts("").is_empty());
+        assert!(parse_addon_network_private_hosts(" , ").is_empty());
+    }
+
+    #[tokio::test]
+    async fn ignores_ip_literals_in_private_hosts() {
+        let private_hosts = parse_addon_network_private_hosts("192.168.1.10");
+        let url = Url::parse("https://192.168.1.10/health").unwrap();
+        assert_eq!(
+            resolve_public_addresses(&url, &private_hosts)
+                .await
+                .unwrap_err(),
+            "Addon network host resolves to a private address"
+        );
+        assert_eq!(
+            perform_addon_network_request(
+                "example-addon",
+                &["192.168.1.10".into()],
+                &private_hosts,
+                private_request("https://192.168.1.10/health"),
+            )
+            .await
+            .unwrap_err(),
+            "Addon network host is not allowed"
+        );
+    }
+
+    #[tokio::test]
+    async fn listed_private_host_still_requires_approval_and_https() {
+        let private_hosts = parse_addon_network_private_hosts("bank-broker.home.example");
+        assert_eq!(
+            perform_addon_network_request(
+                "example-addon",
+                &["api.example.com".into()],
+                &private_hosts,
+                private_request("https://bank-broker.home.example/health"),
+            )
+            .await
+            .unwrap_err(),
+            "Addon network host 'bank-broker.home.example' is not approved"
+        );
+        assert_eq!(
+            perform_addon_network_request(
+                "example-addon",
+                &["bank-broker.home.example".into()],
+                &private_hosts,
+                private_request("http://bank-broker.home.example/health"),
+            )
+            .await
+            .unwrap_err(),
+            "Addon network requests must use HTTPS"
+        );
+    }
+
+    #[test]
+    fn unset_or_empty_private_hosts_block_every_private_address() {
+        for raw in [None, Some(""), Some("  ")] {
+            let private_hosts = raw
+                .map(parse_addon_network_private_hosts)
+                .unwrap_or_default();
+            assert!(private_hosts.is_empty());
+            for ip in [
+                "192.168.10.200",
+                "10.1.2.3",
+                "172.16.0.5",
+                "fd00::1",
+                "127.0.0.1",
+            ] {
+                let ip: IpAddr = ip.parse().unwrap();
+                assert_eq!(
+                    check_resolved_addresses(answers(&[&ip.to_string()]), false).is_err(),
+                    is_blocked_ip(ip)
+                );
+            }
+        }
     }
 
     #[test]

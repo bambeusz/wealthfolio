@@ -1346,6 +1346,12 @@ approved while the dev runtime is active. Successfully loaded dev addons take
 precedence over an installed copy of the same addon. If dev activation fails,
 its authorization is removed before the installed copy can load.
 
+Hosts that resolve to private addresses (RFC 1918, IPv6 unique-local, loopback,
+link-local) fail with `Addon network host resolves to a private address`, for
+installed and dev addons alike. An operator can exempt specific hostnames from
+the RFC 1918 and unique-local block with `WF_ADDON_NETWORK_PRIVATE_HOSTS`;
+loopback and link-local addresses stay blocked for every host.
+
 #### `delete(key: string): Promise<void>`
 
 Permanently deletes a secret.

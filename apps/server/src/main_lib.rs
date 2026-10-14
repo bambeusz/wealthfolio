@@ -1080,11 +1080,14 @@ async fn initialize_profile_state(
 
     let addon_storage_repository =
         Arc::new(AddonStorageRepository::new(pool.clone(), writer.clone()));
-    let addon_service: Arc<dyn AddonServiceTrait + Send + Sync> = Arc::new(AddonService::new(
-        &config.addons_root,
-        rating_instance_id,
-        addon_storage_repository,
-    ));
+    let addon_service: Arc<dyn AddonServiceTrait + Send + Sync> = Arc::new(
+        AddonService::new(
+            &config.addons_root,
+            rating_instance_id,
+            addon_storage_repository,
+        )
+        .with_network_private_hosts(config.addon_network_private_hosts.clone()),
+    );
 
     let auth = crate::auth::AuthState::from_config(config).await?;
     let auth_manager = auth.auth;
